@@ -16,7 +16,7 @@ dependencies = [
     "gunicorn",
     "yandex-music",
     "mutagen",
-    "yt-dlp==2026.3.17",
+    "yt-dlp==2026.6.9",
     "yandex-music-downloader @ https://github.com/llistochek/yandex-music-downloader/archive/refs/tags/v3.5.5.zip",
 ]
 
