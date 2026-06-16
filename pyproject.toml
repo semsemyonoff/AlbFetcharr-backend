@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "albfetcharr"
+version = "0.0.1"
+description = "Bridge between Lidarr and music sources (Yandex Music, yt-dlp, etc.)"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "semsemyonoff"}]
+requires-python = ">=3.13"
+dependencies = [
+    "requests",
+    "flask",
+    "gunicorn",
+    "yandex-music",
+    "mutagen",
+    "yt-dlp==2026.3.17",
+    "yandex-music-downloader @ https://github.com/llistochek/yandex-music-downloader/archive/refs/tags/v3.5.5.zip",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov",
+    "pytest-mock",
+    "responses",
+    "ruff",
+]
+
+[project.scripts]
+albfetcharr = "albfetcharr.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["albfetcharr*"]
+
+[tool.setuptools.package-data]
+"albfetcharr.web" = [
+    "static/**/*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"

@@ -1,0 +1,1 @@
+"""AlbFetcharr web application."""

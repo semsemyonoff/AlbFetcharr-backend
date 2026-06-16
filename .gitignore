@@ -1,0 +1,10 @@
+.ralphex/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+# Built frontend (separate repo) is dropped here at deploy time
+albfetcharr/web/static/dist/
