@@ -108,9 +108,14 @@ def parse_search_entry(entry: dict, *, source: str) -> Match | None:
     if not entry or not isinstance(entry, dict):
         return None
 
-    url = entry.get("url")
+    # Flat search entries (SoundCloud) expose the album under "url"; fully resolved
+    # playlists (YouTube Music album search) carry it as "webpage_url" with "url"
+    # absent or None.
+    url = entry.get("url") or entry.get("webpage_url")
     title = entry.get("title")
-    uploader = entry.get("uploader", "Unknown")
+    # "uploader" may be present-but-None on resolved YouTube Music playlists, so a
+    # plain dict default would leak None into Match.artists — coalesce instead.
+    uploader = entry.get("uploader") or "Unknown"
     year = entry.get("release_year") or entry.get("release_date")
     track_count = entry.get("playlist_count")
 

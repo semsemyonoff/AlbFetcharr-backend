@@ -43,7 +43,9 @@ class TestSearch:
         assert results == []
         mock_ydl.extract_info.assert_called_once()
         args = mock_ydl.extract_info.call_args[0]
-        assert "ytmsearch5:Artist Album" in args[0]
+        assert args[0].startswith("https://music.youtube.com/search?q=")
+        assert "Artist+Album" in args[0]
+        assert args[0].endswith("#Albums")
 
     def test_search_returns_only_playlists(self, provider, mocker):
         """Test that search returns only playlist entries, dropping standalone tracks."""
@@ -139,17 +141,52 @@ class TestSearch:
         assert results == []
 
     def test_search_limit_parameter(self, provider, mocker):
-        """Test that search uses the limit parameter in the query."""
+        """Test that search caps the number of resolved albums via playlist_items."""
         mock_ydl = MagicMock()
         mock_ydl.extract_info.return_value = {"entries": []}
         mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
         mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+        mock_ydl_class = mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
 
         provider.search("Artist", "Album", limit=3)
 
-        args = mock_ydl.extract_info.call_args[0]
-        assert "ytmsearch3:" in args[0]
+        ydl_opts = mock_ydl_class.call_args[0][0]
+        assert ydl_opts["playlist_items"] == "1-3"
+        # Albums must be resolved (not flat) to carry title/track-count metadata.
+        assert "extract_flat" not in ydl_opts
+
+    def test_search_resolved_playlist_shape(self, provider, mocker):
+        """Albums from the music.youtube.com search resolve to playlists whose
+        download URL is under webpage_url, with no uploader and an "Album - "
+        title prefix — the real-world shape that the old ytmsearch path never hit.
+        """
+        entries = [
+            {
+                "_type": "playlist",
+                "url": None,
+                "webpage_url": "https://www.youtube.com/playlist?list=OLAK5uy_abc",
+                "title": "Album - Discovery",
+                "uploader": None,
+                "playlist_count": 14,
+                "thumbnails": [{"url": "https://example.com/cover.jpg"}],
+            },
+        ]
+
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {"entries": entries}
+        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_ydl.__exit__ = MagicMock(return_value=False)
+        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+
+        results = provider.search("Daft Punk", "Discovery", limit=5)
+
+        assert len(results) == 1
+        match = results[0]
+        assert match.url == "https://www.youtube.com/playlist?list=OLAK5uy_abc"
+        assert match.title == "Discovery"  # "Album - " prefix stripped
+        assert match.artists == "Daft Punk"  # falls back to the queried artist
+        assert match.track_count == 14
+        assert match.cover_url == "https://example.com/cover.jpg"
 
 
 class TestDownload:

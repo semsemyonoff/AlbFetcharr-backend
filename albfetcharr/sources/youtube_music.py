@@ -2,6 +2,7 @@
 
 import logging
 from typing import ClassVar
+from urllib.parse import quote_plus
 
 import yt_dlp
 
@@ -38,19 +39,33 @@ class YouTubeMusicProvider(SourceProvider):
 
         Creates a new YoutubeDL instance per call for thread safety.
 
+        yt-dlp has no ``ytmsearch`` query prefix — the only way to reach the
+        YouTube Music search is its ``YoutubeMusicSearchURL`` extractor, driven by
+        a ``https://music.youtube.com/search?q=...`` URL. The ``#Albums`` fragment
+        restricts results to the Albums shelf, and ``playlist_items=1-limit`` caps
+        how many albums are resolved. Resolution is intentionally *not* flat: flat
+        entries are bare ``browse/`` URLs with no title/track count, whereas
+        resolving each album yields a playlist dict with the metadata the UI needs.
+
         Args:
             artist: Artist name.
             album: Album title.
             limit: Maximum number of results to return.
 
         Returns:
-            List of Match objects (playlists only), most relevant first.
+            List of Match objects (album playlists), most relevant first.
         """
-        ydl_opts = build_ydl_opts(self._opts, search=True)
-        query = f"ytmsearch{limit}:{artist} {album}"
+        query = quote_plus(f"{artist} {album}")
+        url = f"https://music.youtube.com/search?q={query}#Albums"
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "playlist_items": f"1-{limit}",
+        }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(query, download=False)
+            info = ydl.extract_info(url, download=False)
 
         if not info or not info.get("entries"):
             return []
@@ -60,8 +75,17 @@ class YouTubeMusicProvider(SourceProvider):
             if not isinstance(entry, dict) or entry.get("_type") != "playlist":
                 continue
             match = parse_search_entry(entry, source=self.id)
-            if match:
-                matches.append(match)
+            if not match:
+                continue
+            # yt-dlp prefixes the Albums-shelf title with "Album - "; strip it for
+            # a clean display name.
+            match.title = match.title.removeprefix("Album - ")
+            # YouTube Music album playlists don't expose the artist, so
+            # parse_search_entry falls back to "Unknown" — substitute the queried
+            # artist, which is what the candidate-matching score compares against.
+            if not entry.get("uploader"):
+                match.artists = artist
+            matches.append(match)
 
         return matches
 

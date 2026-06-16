@@ -117,6 +117,23 @@ class TestParseSearchEntry:
         assert match.year is None
         assert match.track_count is None
 
+    def test_url_falls_back_to_webpage_url(self):
+        """Resolved playlists (YouTube Music albums) carry the URL under
+        webpage_url with url absent/None; uploader may be present-but-None."""
+        entry = {
+            "url": None,
+            "webpage_url": "https://www.youtube.com/playlist?list=OLAK5uy_abc",
+            "title": "Album - Discovery",
+            "uploader": None,
+            "playlist_count": 14,
+        }
+        match = parse_search_entry(entry, source="youtube_music")
+
+        assert match is not None
+        assert match.url == "https://www.youtube.com/playlist?list=OLAK5uy_abc"
+        assert match.artists == "Unknown"  # None uploader coalesced, not leaked
+        assert match.track_count == 14
+
     def test_valid_entry_full(self):
         """Test parsing a valid entry with all fields."""
         entry = {
