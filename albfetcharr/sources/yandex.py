@@ -74,15 +74,11 @@ class YandexMusicProvider(SourceProvider):
                     for a in ym_album.artists
                 )
 
-            reordered = sorted(all_ym, key=lambda a: (0 if _artist_match(a) else 1))
+            reordered = sorted(all_ym, key=lambda a: 0 if _artist_match(a) else 1)
 
             matches = []
             for ym_album in reordered[:limit]:
-                ym_artists = (
-                    ", ".join(a.name for a in ym_album.artists)
-                    if ym_album.artists
-                    else ""
-                )
+                ym_artists = ", ".join(a.name for a in ym_album.artists) if ym_album.artists else ""
                 cover_url = (
                     f"https://{ym_album.cover_uri.replace('%%', '200x200')}"
                     if ym_album.cover_uri

@@ -290,7 +290,6 @@ class TestDownload:
         assert "progress_hooks" not in ydl_opts
         assert "logger" not in ydl_opts
 
-
     def test_download_calls_repair_tags(self, provider, tmp_path, mocker):
         """Test that download calls repair_tags_from_info with correct arguments."""
         match = Match(
@@ -309,12 +308,8 @@ class TestDownload:
         info = {
             "title": "Album",
             "uploader": "Artist",
-            "requested_downloads": [
-                {"filepath": str(album_dir / "01.flac")}
-            ],
-            "entries": [
-                {"title": "Track 1", "artist": "Artist"}
-            ]
+            "requested_downloads": [{"filepath": str(album_dir / "01.flac")}],
+            "entries": [{"title": "Track 1", "artist": "Artist"}],
         }
 
         mock_ydl = MagicMock()
@@ -345,11 +340,7 @@ class TestDownload:
             track_count=10,
         )
 
-        info = {
-            "title": "Album",
-            "uploader": "Artist",
-            "entries": []
-        }
+        info = {"title": "Album", "uploader": "Artist", "entries": []}
 
         mock_ydl = MagicMock()
         mock_ydl.extract_info.return_value = info

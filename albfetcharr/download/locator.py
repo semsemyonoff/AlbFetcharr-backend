@@ -10,7 +10,7 @@ AUDIO_EXTENSIONS = {".mp3", ".flac", ".ogg", ".opus", ".m4a", ".wav"}
 def normalize_name(name: str) -> str:
     """Normalize name for filesystem comparison: strip punctuation, collapse whitespace."""
     name = name.lower()
-    name = re.sub(r'[\W_]', " ", name)
+    name = re.sub(r"[\W_]", " ", name)
     name = re.sub(r"\s+", " ", name).strip()
     return name
 
@@ -63,9 +63,7 @@ def check_album_status(
     if album_dir is None:
         return "missing"
 
-    downloaded = [
-        f for f in album_dir.iterdir() if f.suffix.lower() in AUDIO_EXTENSIONS
-    ]
+    downloaded = [f for f in album_dir.iterdir() if f.suffix.lower() in AUDIO_EXTENSIONS]
     if not downloaded:
         return "missing"
 

@@ -131,16 +131,12 @@ def load_ui_defaults() -> UIDefaults:
     """Load UI default settings from environment variables."""
     language = os.environ.get("ALBFETCHARR_DEFAULT_LANG", "en")
     if language not in ("en", "ru"):
-        logger.warning(
-            f"Invalid ALBFETCHARR_DEFAULT_LANG={language!r}, falling back to 'en'"
-        )
+        logger.warning(f"Invalid ALBFETCHARR_DEFAULT_LANG={language!r}, falling back to 'en'")
         language = "en"
 
     theme = os.environ.get("ALBFETCHARR_DEFAULT_THEME", "system")
     if theme not in ("system", "light", "dark"):
-        logger.warning(
-            f"Invalid ALBFETCHARR_DEFAULT_THEME={theme!r}, falling back to 'system'"
-        )
+        logger.warning(f"Invalid ALBFETCHARR_DEFAULT_THEME={theme!r}, falling back to 'system'")
         theme = "system"
 
     return UIDefaults(language=language, theme=theme)

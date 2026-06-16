@@ -176,9 +176,7 @@ def album_dir_from_info(info: dict) -> Path | None:
     return None
 
 
-def repair_tags_from_info(
-    album_dir: Path, info_dict: dict, log: LogFn | None = None
-) -> None:
+def repair_tags_from_info(album_dir: Path, info_dict: dict, log: LogFn | None = None) -> None:
     """Repair missing or incomplete tags in audio files from yt-dlp metadata.
 
     Iterates over audio files in album_dir and ensures that each has the required
@@ -203,9 +201,7 @@ def repair_tags_from_info(
         _log(f"Album directory does not exist: {album_dir}")
         return
 
-    audio_files = sorted(
-        [f for f in album_dir.iterdir() if f.suffix.lower() in AUDIO_EXTENSIONS]
-    )
+    audio_files = sorted([f for f in album_dir.iterdir() if f.suffix.lower() in AUDIO_EXTENSIONS])
 
     if not audio_files:
         _log(f"No audio files found in {album_dir}")

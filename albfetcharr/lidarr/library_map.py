@@ -41,9 +41,9 @@ def resolve_library_path(lidarr_path: str, mapping: dict[str, str] | None = None
     best_prefix = ""
     best_replacement = ""
     for lidarr_prefix, albfetcharr_prefix in mapping.items():
-        if (
-            lidarr_path.startswith(lidarr_prefix + "/") or lidarr_path == lidarr_prefix
-        ) and len(lidarr_prefix) > len(best_prefix):
+        if (lidarr_path.startswith(lidarr_prefix + "/") or lidarr_path == lidarr_prefix) and len(
+            lidarr_prefix
+        ) > len(best_prefix):
             best_prefix = lidarr_prefix
             best_replacement = albfetcharr_prefix
 
@@ -52,9 +52,7 @@ def resolve_library_path(lidarr_path: str, mapping: dict[str, str] | None = None
     return lidarr_path
 
 
-def validate_library_map(
-    root_folders: list[dict], mapping: dict[str, str] | None = None
-) -> None:
+def validate_library_map(root_folders: list[dict], mapping: dict[str, str] | None = None) -> None:
     """Check that all Lidarr root folders have a corresponding mapping entry.
 
     Args:
@@ -73,9 +71,6 @@ def validate_library_map(
             continue
         # Use same prefix-match logic as resolve_library_path so a root folder
         # that is a subdirectory of a mapped prefix doesn't produce a spurious warning.
-        covered = any(
-            rf_path.startswith(prefix + "/") or rf_path == prefix
-            for prefix in mapping
-        )
+        covered = any(rf_path.startswith(prefix + "/") or rf_path == prefix for prefix in mapping)
         if not covered:
             logger.warning("root folder %r not in ALBFETCHARR_LIBRARY_MAP", rf_path)

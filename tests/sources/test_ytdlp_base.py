@@ -265,11 +265,7 @@ class TestAlbumDirFromInfo:
 
     def test_filepath_in_requested_downloads(self):
         """Test extraction from info["requested_downloads"][0].filepath."""
-        info = {
-            "requested_downloads": [
-                {"filepath": "/dl/Artist/Album/01.m4a"}
-            ]
-        }
+        info = {"requested_downloads": [{"filepath": "/dl/Artist/Album/01.m4a"}]}
         result = album_dir_from_info(info)
 
         assert result == Path("/dl/Artist/Album")
@@ -299,10 +295,7 @@ class TestAlbumDirFromInfo:
 
     def test_no_filepath_returns_none(self, caplog):
         """Test that None is returned when no filepath is found."""
-        info = {
-            "title": "Some Album",
-            "entries": [{"title": "Track 1"}]
-        }
+        info = {"title": "Some Album", "entries": [{"title": "Track 1"}]}
         result = album_dir_from_info(info)
 
         assert result is None
@@ -323,12 +316,10 @@ class TestAlbumDirFromInfo:
     def test_prefers_requested_downloads_over_entries(self):
         """Test that requested_downloads is preferred over entries."""
         info = {
-            "requested_downloads": [
-                {"filepath": "/dl/Artist1/Album1/01.m4a"}
-            ],
+            "requested_downloads": [{"filepath": "/dl/Artist1/Album1/01.m4a"}],
             "entries": [
                 {"filepath": "/dl/Artist2/Album2/01.m4a"},
-            ]
+            ],
         }
         result = album_dir_from_info(info)
 

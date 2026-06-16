@@ -1,6 +1,5 @@
 """Tests for albfetcharr.lidarr.client module."""
 
-
 import responses
 
 from albfetcharr.lidarr.client import (

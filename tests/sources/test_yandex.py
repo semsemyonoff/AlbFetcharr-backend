@@ -53,9 +53,7 @@ class TestBuildCmd:
 
     def test_build_cmd_quality_override(self, provider):
         """Test quality override."""
-        cmd = provider._build_cmd(
-            "https://music.yandex.ru/album/12345", quality_override="1"
-        )
+        cmd = provider._build_cmd("https://music.yandex.ru/album/12345", quality_override="1")
         idx = cmd.index("--quality")
         assert cmd[idx + 1] == "1"
 

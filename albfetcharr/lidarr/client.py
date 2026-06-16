@@ -87,9 +87,7 @@ def wait_for_command(base_url: str, api_key: str, command_id: int, timeout: int 
     headers = {"X-Api-Key": api_key}
     deadline = time.time() + timeout
     while time.time() < deadline:
-        resp = requests.get(
-            f"{base_url}/api/v1/command/{command_id}", headers=headers, timeout=30
-        )
+        resp = requests.get(f"{base_url}/api/v1/command/{command_id}", headers=headers, timeout=30)
         resp.raise_for_status()
         status = resp.json().get("status", "")
         if status == "completed":

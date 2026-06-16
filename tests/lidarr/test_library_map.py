@@ -1,6 +1,5 @@
 """Tests for library_map module."""
 
-
 from albfetcharr.lidarr.library_map import (
     parse_library_map,
     resolve_library_path,
@@ -33,9 +32,7 @@ class TestParseLibraryMap:
 
     def test_trailing_slashes_removed(self, monkeypatch):
         """Trailing slashes are normalized away."""
-        monkeypatch.setenv(
-            "ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr/=/mnt/albfetcharr/"
-        )
+        monkeypatch.setenv("ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr/=/mnt/albfetcharr/")
         result = parse_library_map()
         assert result == {"/mnt/lidarr": "/mnt/albfetcharr"}
 
@@ -58,9 +55,7 @@ class TestParseLibraryMap:
 
     def test_ignores_malformed_pairs(self, monkeypatch):
         """Pairs without '=' are silently ignored."""
-        monkeypatch.setenv(
-            "ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr=/mnt/albfetcharr,invalid_pair"
-        )
+        monkeypatch.setenv("ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr=/mnt/albfetcharr,invalid_pair")
         result = parse_library_map()
         assert result == {"/mnt/lidarr": "/mnt/albfetcharr"}
 
@@ -140,6 +135,7 @@ class TestValidateLibraryMap:
     def test_mapped_root_folder_no_warning(self, caplog):
         """Root folder in mapping produces no warning."""
         import logging
+
         mapping = {"/mnt/lidarr": "/mnt/albfetcharr"}
         root_folders = [{"path": "/mnt/lidarr"}]
         with caplog.at_level(logging.WARNING, logger="albfetcharr"):
@@ -149,6 +145,7 @@ class TestValidateLibraryMap:
     def test_unmapped_root_folder_warning(self, caplog):
         """Root folder not in mapping produces warning."""
         import logging
+
         mapping = {"/mnt/lidarr": "/mnt/albfetcharr"}
         root_folders = [{"path": "/data/music"}]
         with caplog.at_level(logging.WARNING, logger="albfetcharr"):
@@ -160,6 +157,7 @@ class TestValidateLibraryMap:
     def test_multiple_root_folders(self, caplog):
         """Multiple root folders: only unmapped ones warn."""
         import logging
+
         mapping = {"/mnt/lidarr": "/mnt/albfetcharr"}
         root_folders = [
             {"path": "/mnt/lidarr"},
@@ -176,6 +174,7 @@ class TestValidateLibraryMap:
     def test_trailing_slashes_normalized(self, caplog):
         """Trailing slashes in root folder paths are normalized."""
         import logging
+
         mapping = {"/mnt/lidarr": "/mnt/albfetcharr"}
         root_folders = [{"path": "/mnt/lidarr/"}]  # trailing slash
         with caplog.at_level(logging.WARNING, logger="albfetcharr"):
@@ -185,6 +184,7 @@ class TestValidateLibraryMap:
     def test_missing_path_key_ignored(self, caplog):
         """Root folder without 'path' key is silently ignored."""
         import logging
+
         mapping = {"/mnt/lidarr": "/mnt/albfetcharr"}
         root_folders = [{"id": 1}, {"path": "/data/music"}]
         with caplog.at_level(logging.WARNING, logger="albfetcharr"):
@@ -196,6 +196,7 @@ class TestValidateLibraryMap:
     def test_empty_path_value_ignored(self, caplog):
         """Root folder with empty path is ignored."""
         import logging
+
         mapping = {"/mnt/lidarr": "/mnt/albfetcharr"}
         root_folders = [{"path": ""}, {"path": "/data/music"}]
         with caplog.at_level(logging.WARNING, logger="albfetcharr"):
@@ -207,6 +208,7 @@ class TestValidateLibraryMap:
     def test_fetches_from_env_if_mapping_not_provided(self, monkeypatch, caplog):
         """If mapping is None, fetch from env."""
         import logging
+
         monkeypatch.setenv("ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr=/mnt/albfetcharr")
         root_folders = [{"path": "/data/music"}]
         with caplog.at_level(logging.WARNING, logger="albfetcharr"):

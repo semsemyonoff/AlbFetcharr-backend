@@ -67,9 +67,11 @@ def register_routes(app: Flask):
     @app.route("/")
     def index():
         try:
-            index_html = importlib.resources.files(
-                "albfetcharr.web"
-            ).joinpath("static/dist/index.html").read_text()
+            index_html = (
+                importlib.resources.files("albfetcharr.web")
+                .joinpath("static/dist/index.html")
+                .read_text()
+            )
             return index_html, 200, {"Content-Type": "text/html; charset=utf-8"}
         except (FileNotFoundError, AttributeError):
             error_msg = (
@@ -87,12 +89,14 @@ def register_routes(app: Flask):
             default_quality = 2
         ui_defaults = load_ui_defaults()
         lidarr_cfg = load_lidarr_config()
-        return jsonify({
-            "default_quality": default_quality,
-            "default_lang": ui_defaults.language,
-            "default_theme": ui_defaults.theme,
-            "import_enabled": bool(lidarr_cfg.import_path),
-        })
+        return jsonify(
+            {
+                "default_quality": default_quality,
+                "default_lang": ui_defaults.language,
+                "default_theme": ui_defaults.theme,
+                "import_enabled": bool(lidarr_cfg.import_path),
+            }
+        )
 
     @app.route("/api/sources")
     def api_sources():
@@ -312,26 +316,24 @@ def register_routes(app: Flask):
             try:
                 get_provider(item["source"])
             except KeyError:
-                return jsonify(
-                    {"error": f"Unknown source: {item['source']}"}
-                ), 400
+                return jsonify({"error": f"Unknown source: {item['source']}"}), 400
 
         if not download_lock.acquire(blocking=False):
             return jsonify({"error": "Download already in progress"}), 409
 
-        def emit_progress(
-            album_id, item_index, item_total, status, message=""
-        ):
+        def emit_progress(album_id, item_index, item_total, status, message=""):
             """Emit a progress event to the SSE stream."""
-            log_queue.put({
-                "progress": {
-                    "album_id": album_id,
-                    "item_index": item_index,
-                    "item_total": item_total,
-                    "status": status,
-                    "message": message,
+            log_queue.put(
+                {
+                    "progress": {
+                        "album_id": album_id,
+                        "item_index": item_index,
+                        "item_total": item_total,
+                        "status": status,
+                        "message": message,
+                    }
                 }
-            })
+            )
 
         def run_downloads():
             try:
@@ -358,18 +360,12 @@ def register_routes(app: Flask):
                     except KeyError:
                         log(f"[{idx}/{len(items)}] Source '{source}' not available")
                         emit_progress(
-                            album_id, idx, len(items),
-                            "failed",
-                            f"Source '{source}' not available"
+                            album_id, idx, len(items), "failed", f"Source '{source}' not available"
                         )
                         continue
 
                     # Emit starting status
-                    emit_progress(
-                        album_id, idx, len(items),
-                        "starting",
-                        f"{artist} — {title}"
-                    )
+                    emit_progress(album_id, idx, len(items), "starting", f"{artist} — {title}")
 
                     quality_str = str(quality) if quality is not None else ""
                     quality_info = f" (quality: {quality_str})" if quality_str else ""
@@ -378,9 +374,11 @@ def register_routes(app: Flask):
 
                     # Emit downloading status
                     emit_progress(
-                        album_id, idx, len(items),
+                        album_id,
+                        idx,
+                        len(items),
                         "downloading",
-                        f"Downloading from {provider.name}"
+                        f"Downloading from {provider.name}",
                     )
 
                     match = Match(
@@ -394,50 +392,43 @@ def register_routes(app: Flask):
                     )
 
                     try:
-                        success = provider.download(
-                            match, quality=quality, log=log
-                        )
+                        success = provider.download(match, quality=quality, log=log)
                     except Exception as e:
                         success = False
                         exc_name = type(e).__name__
                         log(f"  ERROR: {exc_name}")
                         emit_progress(
-                            album_id, idx, len(items),
-                            "failed",
-                            f"Download failed: {exc_name}"
+                            album_id, idx, len(items), "failed", f"Download failed: {exc_name}"
                         )
                         continue
 
                     if success:
-                        if (
-                            source == "yandex"
-                            and load_yandex_options().clear_comments
-                        ):
-                            album_dir = find_album_dir(
-                                download_dir, artist, title
-                            )
+                        if source == "yandex" and load_yandex_options().clear_comments:
+                            album_dir = find_album_dir(download_dir, artist, title)
                             if album_dir:
                                 log("  Clearing comments tags...")
                                 clear_comments(album_dir)
-                        downloaded.append({
-                            "artist": artist,
-                            "title": title,
-                            "album_id": album_id,
-                            "item_idx": idx,
-                        })
+                        downloaded.append(
+                            {
+                                "artist": artist,
+                                "title": title,
+                                "album_id": album_id,
+                                "item_idx": idx,
+                            }
+                        )
                         log("  OK")
                         # Emit downloaded status
                         emit_progress(
-                            album_id, idx, len(items),
-                            "downloaded",
-                            "Downloaded, awaiting import"
+                            album_id, idx, len(items), "downloaded", "Downloaded, awaiting import"
                         )
                     else:
                         log("  FAILED")
                         emit_progress(
-                            album_id, idx, len(items),
+                            album_id,
+                            idx,
+                            len(items),
                             "failed",
-                            "Download failed — see log for details"
+                            "Download failed — see log for details",
                         )
 
                 log(f"\nDownloaded: {len(downloaded)}/{len(items)}")
@@ -450,22 +441,20 @@ def register_routes(app: Flask):
                         album_id = d["album_id"]
                         idx = d["item_idx"]
                         emit_progress(
-                            album_id, idx, len(items),
-                            "importing",
-                            "Importing into Lidarr…"
+                            album_id, idx, len(items), "importing", "Importing into Lidarr…"
                         )
 
                     try:
-                        import_ok = run_import(
-                            cfg.base_url, cfg.api_key, cfg.import_path, log=log
-                        )
+                        import_ok = run_import(cfg.base_url, cfg.api_key, cfg.import_path, log=log)
                     except Exception as import_err:
                         log(f"  Import error: {import_err}")
                         for d in downloaded:
                             emit_progress(
-                                d["album_id"], d["item_idx"], len(items),
+                                d["album_id"],
+                                d["item_idx"],
+                                len(items),
                                 "failed",
-                                "Lidarr import error"
+                                "Lidarr import error",
                             )
                         import_ok = None
 
@@ -480,17 +469,17 @@ def register_routes(app: Flask):
                         log("  Cleanup done.")
                         for d in downloaded:
                             emit_progress(
-                                d["album_id"], d["item_idx"], len(items),
-                                "done",
-                                "Import complete"
+                                d["album_id"], d["item_idx"], len(items), "done", "Import complete"
                             )
                     elif import_ok is False:
                         log("  Import did not complete successfully.")
                         for d in downloaded:
                             emit_progress(
-                                d["album_id"], d["item_idx"], len(items),
+                                d["album_id"],
+                                d["item_idx"],
+                                len(items),
                                 "failed",
-                                "Lidarr import failed"
+                                "Lidarr import failed",
                             )
                 elif downloaded:
                     # Import disabled: emit done directly for downloaded albums
@@ -503,9 +492,11 @@ def register_routes(app: Flask):
                         album_id = d["album_id"]
                         idx = d["item_idx"]
                         emit_progress(
-                            album_id, idx, len(items),
+                            album_id,
+                            idx,
+                            len(items),
                             "done",
-                            "Saved to downloads (Lidarr import disabled)"
+                            "Saved to downloads (Lidarr import disabled)",
                         )
 
             except Exception as e:
@@ -551,12 +542,8 @@ def register_routes(app: Flask):
                             _handoff_condition.notify_all()
                         # Update last_seen on timeout; also exit if superseded.
                         with _stream_claim_lock:
-                            _stream_claim_state["last_seen"] = (
-                                time.monotonic()
-                            )
-                            still_owner = (
-                                _stream_claim_state["generation"] == my_gen
-                            )
+                            _stream_claim_state["last_seen"] = time.monotonic()
+                            still_owner = _stream_claim_state["generation"] == my_gen
                         if not still_owner:
                             break
                         yield ": keepalive\n\n"
@@ -564,12 +551,8 @@ def register_routes(app: Flask):
 
                     # Update last_seen and check ownership.
                     with _stream_claim_lock:
-                        _stream_claim_state["last_seen"] = (
-                            time.monotonic()
-                        )
-                        still_owner = (
-                            _stream_claim_state["generation"] == my_gen
-                        )
+                        _stream_claim_state["last_seen"] = time.monotonic()
+                        still_owner = _stream_claim_state["generation"] == my_gen
 
                     if not still_owner:
                         # Restore at front to preserve FIFO order, THEN
@@ -607,9 +590,7 @@ def register_routes(app: Flask):
                                 if isinstance(leftover, dict):
                                     yield f"data: {json.dumps(leftover)}\n\n"
                                 else:
-                                    yield (
-                                        f"data: {json.dumps({'log': leftover})}\n\n"
-                                    )
+                                    yield (f"data: {json.dumps({'log': leftover})}\n\n")
                             except queue.Empty:
                                 break
                         yield f"data: {json.dumps({'done': True})}\n\n"
@@ -643,9 +624,7 @@ def register_routes(app: Flask):
                             yield f"data: {json.dumps({'log': msg})}\n\n"
                     finally:
                         with _stream_claim_lock:
-                            still_owner_after = (
-                                _stream_claim_state["generation"] == my_gen
-                            )
+                            still_owner_after = _stream_claim_state["generation"] == my_gen
                         if not still_owner_after:
                             with log_queue.mutex:
                                 log_queue.queue.appendleft(msg)

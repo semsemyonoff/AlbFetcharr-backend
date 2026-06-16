@@ -45,8 +45,18 @@ line-length = 100
 target-version = "py313"
 
 [tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I import sorting.
 select = ["E", "F", "W", "I"]
+ignore = ["E501"]  # line length is handled by the formatter
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+
+[tool.coverage.run]
+source = ["albfetcharr"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 0

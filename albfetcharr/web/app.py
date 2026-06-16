@@ -27,8 +27,6 @@ def create_app() -> Flask:
             root_folders = get_root_folders(cfg.base_url, cfg.api_key)
             validate_library_map(root_folders)
     except Exception:
-        logger.warning(
-            "Could not validate library map against Lidarr (is Lidarr available?)"
-        )
+        logger.warning("Could not validate library map against Lidarr (is Lidarr available?)")
 
     return app

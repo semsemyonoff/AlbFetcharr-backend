@@ -116,10 +116,13 @@ def test_api_config(client):
 @pytest.mark.usefixtures("_clean_registry")
 def test_api_config_returns_ui_defaults(client):
     """Test /api/config endpoint returns UI defaults (lang and theme)."""
-    with patch.dict("os.environ", {
-        "ALBFETCHARR_DEFAULT_LANG": "ru",
-        "ALBFETCHARR_DEFAULT_THEME": "dark",
-    }):
+    with patch.dict(
+        "os.environ",
+        {
+            "ALBFETCHARR_DEFAULT_LANG": "ru",
+            "ALBFETCHARR_DEFAULT_THEME": "dark",
+        },
+    ):
         response = client.get("/api/config")
         assert response.status_code == 200
         data = response.get_json()
@@ -181,11 +184,14 @@ def test_api_wanted(client, tmp_path):
         status=200,
     )
 
-    with patch.dict("os.environ", {
-        "LIDARR_URL": "http://lidarr.test",
-        "LIDARR_API_KEY": "test_key",
-        "DOWNLOAD_DIR": str(tmp_path),
-    }):
+    with patch.dict(
+        "os.environ",
+        {
+            "LIDARR_URL": "http://lidarr.test",
+            "LIDARR_API_KEY": "test_key",
+            "DOWNLOAD_DIR": str(tmp_path),
+        },
+    ):
         response = client.get("/api/wanted")
         assert response.status_code == 200
         data = response.get_json()
@@ -321,11 +327,14 @@ def test_api_download_started(client):
         ]
     }
 
-    with patch.dict("os.environ", {
-        "LIDARR_URL": "http://lidarr.test",
-        "LIDARR_API_KEY": "test_key",
-        "DOWNLOAD_DIR": "/downloads",
-    }):
+    with patch.dict(
+        "os.environ",
+        {
+            "LIDARR_URL": "http://lidarr.test",
+            "LIDARR_API_KEY": "test_key",
+            "DOWNLOAD_DIR": "/downloads",
+        },
+    ):
         response = client.post(
             "/api/download",
             data=json.dumps(payload),
@@ -422,15 +431,13 @@ def test_api_download_stream(client):
 @pytest.mark.usefixtures("_clean_registry")
 def test_index_returns_html(client):
     """Test / endpoint returns the React app shell."""
-    dist = (
-        Path(__file__).parents[2] / "albfetcharr" / "web" / "static" / "dist" / "index.html"
-    )
+    dist = Path(__file__).parents[2] / "albfetcharr" / "web" / "static" / "dist" / "index.html"
     if not dist.exists():
         pytest.skip("Frontend not built — build the frontend repo and deploy dist into static/dist")
     response = client.get("/")
     assert response.status_code == 200
     assert b"<!doctype html>" in response.data or b"<html" in response.data
-    assert b"<div id=\"root\"></div>" in response.data
+    assert b'<div id="root"></div>' in response.data
     assert b"/static/dist/assets/" in response.data
 
 
@@ -757,9 +764,7 @@ def test_stream_handoff_coordination_prevents_orphaned_messages(client):
     progress_events = [e for e in events if "progress" in e]
     done_events = [e for e in events if e.get("done")]
 
-    assert len(progress_events) == 1, (
-        "progress event requeued by stale generator must be emitted"
-    )
+    assert len(progress_events) == 1, "progress event requeued by stale generator must be emitted"
     assert progress_events[0] == progress_event
     assert len(done_events) == 1, "done event must be emitted"
 
@@ -787,9 +792,7 @@ def test_download_stream_emits_progress(client):
         def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
             return []
 
-        def download(
-            self, match: Match, *, quality: str | None = None, log=None
-        ) -> bool:
+        def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
             if log:
                 log("Download success")
             return True
@@ -819,11 +822,14 @@ def test_download_stream_emits_progress(client):
         ]
     }
 
-    with patch.dict("os.environ", {
-        "LIDARR_URL": "http://lidarr.test",
-        "LIDARR_API_KEY": "test_key",
-        "DOWNLOAD_DIR": "/downloads",
-    }):
+    with patch.dict(
+        "os.environ",
+        {
+            "LIDARR_URL": "http://lidarr.test",
+            "LIDARR_API_KEY": "test_key",
+            "DOWNLOAD_DIR": "/downloads",
+        },
+    ):
         response = test_client.post(
             "/api/download",
             data=json.dumps(payload),
@@ -879,9 +885,7 @@ def test_download_stream_legacy_log_strings_still_work(client):
         def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
             return []
 
-        def download(
-            self, match: Match, *, quality: str | None = None, log=None
-        ) -> bool:
+        def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
             if log:
                 log("Custom log message from provider")
             return True
@@ -909,11 +913,14 @@ def test_download_stream_legacy_log_strings_still_work(client):
         ]
     }
 
-    with patch.dict("os.environ", {
-        "LIDARR_URL": "http://lidarr.test",
-        "LIDARR_API_KEY": "test_key",
-        "DOWNLOAD_DIR": "/downloads",
-    }):
+    with patch.dict(
+        "os.environ",
+        {
+            "LIDARR_URL": "http://lidarr.test",
+            "LIDARR_API_KEY": "test_key",
+            "DOWNLOAD_DIR": "/downloads",
+        },
+    ):
         test_client.post(
             "/api/download",
             data=json.dumps(payload),
@@ -954,9 +961,7 @@ def test_importing_status_emitted_per_album_at_batch_boundary(client):
         def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
             return []
 
-        def download(
-            self, match: Match, *, quality: str | None = None, log=None
-        ) -> bool:
+        def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
             return True
 
     clear_registry()
@@ -990,15 +995,18 @@ def test_importing_status_emitted_per_album_at_batch_boundary(client):
         ]
     }
 
-    with patch.dict("os.environ", {
-        "LIDARR_URL": "http://lidarr.test",
-        "LIDARR_API_KEY": "test_key",
-        "DOWNLOAD_DIR": "/downloads",
-        "ALBFETCHARR_LIDARR_IMPORT_PATH": "/music/import",
-    }), patch(
-        "albfetcharr.web.routes.run_import", return_value=True
-    ), patch(
-        "albfetcharr.web.routes.post_import_cleanup"
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "LIDARR_URL": "http://lidarr.test",
+                "LIDARR_API_KEY": "test_key",
+                "DOWNLOAD_DIR": "/downloads",
+                "ALBFETCHARR_LIDARR_IMPORT_PATH": "/music/import",
+            },
+        ),
+        patch("albfetcharr.web.routes.run_import", return_value=True),
+        patch("albfetcharr.web.routes.post_import_cleanup"),
     ):
         test_client.post(
             "/api/download",
@@ -1017,9 +1025,7 @@ def test_importing_status_emitted_per_album_at_batch_boundary(client):
                     pass
 
     progress_events = [e for e in events if "progress" in e]
-    importing_events = [
-        e for e in progress_events if e["progress"]["status"] == "importing"
-    ]
+    importing_events = [e for e in progress_events if e["progress"]["status"] == "importing"]
 
     # Should have importing events for both albums
     assert len(importing_events) == 2
@@ -1045,9 +1051,7 @@ def test_done_emitted_directly_when_import_path_unset(client):
         def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
             return []
 
-        def download(
-            self, match: Match, *, quality: str | None = None, log=None
-        ) -> bool:
+        def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
             return True
 
     clear_registry()
@@ -1072,20 +1076,21 @@ def test_done_emitted_directly_when_import_path_unset(client):
     }
 
     # Mock load_lidarr_config with empty import_path
-    with patch(
-        "albfetcharr.web.routes.load_lidarr_config"
-    ) as mock_config:
+    with patch("albfetcharr.web.routes.load_lidarr_config") as mock_config:
         mock_cfg = MagicMock()
         mock_cfg.base_url = "http://lidarr.test"
         mock_cfg.api_key = "test_key"
         mock_cfg.import_path = ""
         mock_config.return_value = mock_cfg
 
-        with patch.dict("os.environ", {
-            "LIDARR_URL": "http://lidarr.test",
-            "LIDARR_API_KEY": "test_key",
-            "DOWNLOAD_DIR": "/downloads",
-        }):
+        with patch.dict(
+            "os.environ",
+            {
+                "LIDARR_URL": "http://lidarr.test",
+                "LIDARR_API_KEY": "test_key",
+                "DOWNLOAD_DIR": "/downloads",
+            },
+        ):
             test_client.post(
                 "/api/download",
                 data=json.dumps(payload),
@@ -1103,12 +1108,8 @@ def test_done_emitted_directly_when_import_path_unset(client):
                         pass
 
     progress_events = [e for e in events if "progress" in e]
-    importing_events = [
-        e for e in progress_events if e["progress"]["status"] == "importing"
-    ]
-    done_events = [
-        e for e in progress_events if e["progress"]["status"] == "done"
-    ]
+    importing_events = [e for e in progress_events if e["progress"]["status"] == "importing"]
+    done_events = [e for e in progress_events if e["progress"]["status"] == "done"]
 
     # Should have no importing events
     assert len(importing_events) == 0
@@ -1119,9 +1120,9 @@ def test_done_emitted_directly_when_import_path_unset(client):
     # Verify the done message mentions import disabled
     log_events = [e for e in events if "log" in e]
     log_messages = [e["log"] for e in log_events]
-    assert any(
-        "import disabled" in msg.lower() for msg in log_messages
-    ), f"Log messages: {log_messages}"
+    assert any("import disabled" in msg.lower() for msg in log_messages), (
+        f"Log messages: {log_messages}"
+    )
 
     # Clean up
     with _stream_claim_lock:
@@ -1133,9 +1134,7 @@ def test_done_emitted_directly_when_import_path_unset(client):
 @pytest.mark.usefixtures("_clean_registry")
 def test_index_serves_built_frontend(client):
     """Test that / serves the built Vite frontend."""
-    dist = (
-        Path(__file__).parents[2] / "albfetcharr" / "web" / "static" / "dist" / "index.html"
-    )
+    dist = Path(__file__).parents[2] / "albfetcharr" / "web" / "static" / "dist" / "index.html"
     if not dist.exists():
         pytest.skip("Frontend not built — build the frontend repo and deploy dist into static/dist")
     response = client.get("/")
@@ -1143,16 +1142,14 @@ def test_index_serves_built_frontend(client):
     assert response.content_type == "text/html; charset=utf-8"
     html = response.get_data(as_text=True)
     assert "/static/dist/assets/" in html
-    assert "<div id=\"root\"></div>" in html
+    assert '<div id="root"></div>' in html
 
 
 @pytest.mark.usefixtures("_clean_registry")
 def test_index_returns_helpful_error_when_dist_missing(client):
     """Test that / returns helpful error when frontend not built."""
     with patch("importlib.resources.files") as mock_files:
-        mock_files.side_effect = FileNotFoundError(
-            "static/dist/index.html not found"
-        )
+        mock_files.side_effect = FileNotFoundError("static/dist/index.html not found")
         response = client.get("/")
         assert response.status_code == 500
         assert response.content_type == "text/plain"

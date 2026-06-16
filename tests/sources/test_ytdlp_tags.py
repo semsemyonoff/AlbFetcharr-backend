@@ -50,7 +50,7 @@ class TestRepairTagsFromInfo:
             "entries": [
                 {"title": "Different Track 1", "artist": "Different Artist 1"},
                 {"title": "Different Track 2", "artist": "Different Artist 2"},
-            ]
+            ],
         }
         repair_tags_from_info(album_dir, info)
 
@@ -70,11 +70,7 @@ class TestRepairTagsFromInfo:
             tags.save()
 
         # Execute
-        info = {
-            "title": "Test Album",
-            "uploader": "Test Artist",
-            "entries": []
-        }
+        info = {"title": "Test Album", "uploader": "Test Artist", "entries": []}
         repair_tags_from_info(album_dir, info)
 
         # Verify
@@ -99,7 +95,7 @@ class TestRepairTagsFromInfo:
             "entries": [
                 {"title": "Track One", "artist": "Test Artist"},
                 {"title": "Track Two", "artist": "Test Artist"},
-            ]
+            ],
         }
         repair_tags_from_info(album_dir, info)
 
@@ -120,11 +116,7 @@ class TestRepairTagsFromInfo:
             tags.save()
 
         # Execute
-        info = {
-            "title": "Test Album",
-            "uploader": "Test Artist",
-            "entries": []
-        }
+        info = {"title": "Test Album", "uploader": "Test Artist", "entries": []}
         repair_tags_from_info(album_dir, info)
 
         # Verify: tracknumber should be set based on position
@@ -145,11 +137,7 @@ class TestRepairTagsFromInfo:
             tags.save()
 
         # Execute
-        info = {
-            "title": "Test Album",
-            "uploader": "Test Artist",
-            "entries": []
-        }
+        info = {"title": "Test Album", "uploader": "Test Artist", "entries": []}
         repair_tags_from_info(album_dir, info)
 
         # Verify: no errors, and non-audio files still exist
@@ -162,9 +150,7 @@ class TestRepairTagsFromInfo:
         info = {
             "title": "Test Album",
             "uploader": "Test Artist",
-            "entries": [
-                {"title": "Track One", "artist": "Artist One"}
-            ]
+            "entries": [{"title": "Track One", "artist": "Artist One"}],
         }
         repair_tags_from_info(album_dir, info)
 
@@ -206,11 +192,7 @@ class TestRepairTagsFromInfo:
             tags.save()
 
         # Execute
-        info = {
-            "title": "Test Album",
-            "uploader": "Test Artist",
-            "entries": []
-        }
+        info = {"title": "Test Album", "uploader": "Test Artist", "entries": []}
         repair_tags_from_info(album_dir, info, log=capture_log)
 
         # Verify: log was called

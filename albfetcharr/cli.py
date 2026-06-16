@@ -136,11 +136,7 @@ def cmd_wanted(args):
     else:
         print("\nNothing to download.")
 
-    if (
-        ready_for_import
-        and lidarr_cfg.import_path
-        and not args.no_import
-    ):
+    if ready_for_import and lidarr_cfg.import_path and not args.no_import:
         if run_import(
             lidarr_cfg.base_url,
             lidarr_cfg.api_key,
@@ -221,9 +217,7 @@ def main():
     )
     wanted_parser.set_defaults(func=cmd_wanted)
 
-    download_parser = subparsers.add_parser(
-        "download", help="Download a single album by URL"
-    )
+    download_parser = subparsers.add_parser("download", help="Download a single album by URL")
     download_parser.add_argument(
         "url", help="Album URL to download (e.g., https://music.yandex.ru/album/12345)"
     )

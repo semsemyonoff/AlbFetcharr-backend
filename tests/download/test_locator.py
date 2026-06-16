@@ -1,6 +1,5 @@
 """Tests for albfetcharr.download.locator module."""
 
-
 from albfetcharr.download.locator import (
     AUDIO_EXTENSIONS,
     check_album_status,

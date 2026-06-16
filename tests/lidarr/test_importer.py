@@ -317,11 +317,10 @@ def test_post_import_cleanup(tmp_path):
 
     log_messages = []
 
-    with patch(
-        "albfetcharr.lidarr.importer.get_album_path"
-    ) as mock_get_path, patch(
-        "albfetcharr.lidarr.importer.resolve_library_path"
-    ) as mock_resolve:
+    with (
+        patch("albfetcharr.lidarr.importer.get_album_path") as mock_get_path,
+        patch("albfetcharr.lidarr.importer.resolve_library_path") as mock_resolve,
+    ):
         mock_get_path.return_value = str(lib_album_dir)
         mock_resolve.side_effect = lambda x: x
 
@@ -362,11 +361,10 @@ def test_post_import_cleanup_no_cover(tmp_path):
 
     log_messages = []
 
-    with patch(
-        "albfetcharr.lidarr.importer.get_album_path"
-    ) as mock_get_path, patch(
-        "albfetcharr.lidarr.importer.resolve_library_path"
-    ) as mock_resolve:
+    with (
+        patch("albfetcharr.lidarr.importer.get_album_path") as mock_get_path,
+        patch("albfetcharr.lidarr.importer.resolve_library_path") as mock_resolve,
+    ):
         mock_get_path.return_value = "/library/Artist Two/Album Two"
         mock_resolve.side_effect = lambda x: x
 
@@ -400,9 +398,7 @@ def test_post_import_cleanup_album_not_found(tmp_path):
 
     log_messages = []
 
-    with patch(
-        "albfetcharr.lidarr.importer.get_album_path"
-    ) as mock_get_path:
+    with patch("albfetcharr.lidarr.importer.get_album_path") as mock_get_path:
         post_import_cleanup(
             str(download_dir),
             base_url,
@@ -439,11 +435,10 @@ def test_post_import_cleanup_library_path_inaccessible(tmp_path):
 
     log_messages = []
 
-    with patch(
-        "albfetcharr.lidarr.importer.get_album_path"
-    ) as mock_get_path, patch(
-        "albfetcharr.lidarr.importer.resolve_library_path"
-    ) as mock_resolve:
+    with (
+        patch("albfetcharr.lidarr.importer.get_album_path") as mock_get_path,
+        patch("albfetcharr.lidarr.importer.resolve_library_path") as mock_resolve,
+    ):
         mock_get_path.return_value = "/nonexistent/library/path"
         mock_resolve.side_effect = lambda x: x
 
