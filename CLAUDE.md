@@ -6,13 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AlbFetcharr is a Python service that bridges [Lidarr](https://lidarr.audio/) and music sources ([Yandex Music](https://music.yandex.ru/), [YouTube Music](https://music.youtube.com/), [SoundCloud](https://soundcloud.com/)): it fetches Lidarr's wanted/missing albums, searches available sources, downloads them, then triggers Lidarr's ManualImport API to move them into the library. The service is built on an extensible `SourceProvider` abstraction, allowing multiple sources to coexist. README.md is in Russian and is the canonical user-facing doc.
 
-This repository is the **backend only**. The React + Vite SPA lives in a **separate repository** and talks to this backend purely over HTTP (`/api`, `/static`) — there is no shared code or filesystem with the frontend. Docker images and compose/deploy wiring also live outside this repo (DWE/services layer); this repo is backend source.
+This repository is the **backend only**. The React + Vite SPA lives in a **separate repository** and talks to this backend purely over HTTP (`/api`, `/static`) — there is no shared code or filesystem with the frontend. How the service is packaged, hosted, or orchestrated is out of scope for this repo, which is pure application source; the app runs anywhere a Python 3.13+ environment and its dependencies are available.
 
-**Runtime dependencies:** ffmpeg is required for audio format conversion with yt-dlp sources (YouTube Music, SoundCloud). It is installed in the deployment image (built outside this repo) but must be available on the host when running outside a container.
+**System requirements:** ffmpeg must be on `PATH` — it is required for audio format conversion with yt-dlp sources (YouTube Music, SoundCloud).
 
 ## Architecture
 
-The codebase is organized as a Python package under `albfetcharr/`, with tests in `tests/`. Dependencies are managed via `pyproject.toml` and the backend is installed as an editable package (`pip install -e ".[dev]"`). In production the frontend's build artifact is dropped into `albfetcharr/web/static/dist/` and served by Flask; that build happens in the separate frontend repository, not here.
+The codebase is organized as a Python package under `albfetcharr/`, with tests in `tests/`. Dependencies and tooling are configured in `pyproject.toml` (runtime under `[project]`, dev tools under the `dev` extra; ruff, pytest, and coverage are all configured there); the backend installs as an editable package (`pip install -e ".[dev]"`). Flask serves the frontend's build artifact from `albfetcharr/web/static/dist/` when present; that build is produced in the separate frontend repository, not here.
 
 - **`albfetcharr.cli`** — CLI entrypoint with subcommands `wanted` (fetch + search + download + import) and `download URL`. Initializes the Lidarr client and provider registry.
 - **`albfetcharr.web.app`** — Flask app factory `create_app()` that exposes `/api/wanted`, `/api/search`, `/api/download` (with SSE log stream at `/api/download/stream`), `/api/download/stream/claim` (preflight for stream ownership), and `/api/config` (default language/theme). Single-process gunicorn, 1 worker / 4 threads — download concurrency is gated by `download_lock`. No background auto-download loop (UI is fully session-driven).
@@ -25,7 +25,7 @@ The codebase is organized as a Python package under `albfetcharr/`, with tests i
 
 ### Path mapping (important and non-obvious)
 
-Lidarr and AlbFetcharr see the music library at different mount points inside their containers. `ALBFETCHARR_LIBRARY_MAP` (`lidarr_path=albfetcharr_path,...`) translates a Lidarr-internal path (returned by the Lidarr API, e.g. `/data/library/Artist/Album`) into the corresponding AlbFetcharr-accessible path so the post-import cover-art move works. `resolve_library_path` does longest-prefix matching; `validate_library_map(root_folders, mapping=None)` warns at startup if any Lidarr root folder is unmapped — callers must fetch `root_folders` themselves via `get_root_folders()` and pass the result; the function does **not** make HTTP calls. `ALBFETCHARR_LIDARR_IMPORT_PATH` is a separate variable: the *Lidarr-internal* view of the downloads folder, used as the `folder=` argument to `/api/v1/manualimport`.
+Lidarr and AlbFetcharr may see the music library at different mount points in their respective runtime environments. `ALBFETCHARR_LIBRARY_MAP` (`lidarr_path=albfetcharr_path,...`) translates a Lidarr-internal path (returned by the Lidarr API, e.g. `/data/library/Artist/Album`) into the corresponding AlbFetcharr-accessible path so the post-import cover-art move works. `resolve_library_path` does longest-prefix matching; `validate_library_map(root_folders, mapping=None)` warns at startup if any Lidarr root folder is unmapped — callers must fetch `root_folders` themselves via `get_root_folders()` and pass the result; the function does **not** make HTTP calls. `ALBFETCHARR_LIDARR_IMPORT_PATH` is a separate variable: the *Lidarr-internal* view of the downloads folder, used as the `folder=` argument to `/api/v1/manualimport`.
 
 `bootstrap_default_providers()` is called explicitly from `cli.main()` and `create_app()` — **never at module import time**. This keeps the test registry empty by default. Tests register their own fakes via `register()` and isolate via the `_clean_registry` autouse fixture in `tests/conftest.py`.
 
@@ -42,23 +42,27 @@ pip install -e ".[dev]"
 # Run tests
 pytest
 
-# Run tests with coverage report
+# Run tests with coverage report (scoped to the albfetcharr package)
 pytest --cov=albfetcharr
 
-# Lint code
-ruff check albfetcharr/ tests/
+# Lint and format
+ruff check .
+ruff format .
 
 # Run locally (after `pip install -e ".[dev]"`)
 LIDARR_URL=... LIDARR_API_KEY=... YANDEX_MUSIC_TOKEN=... python -m albfetcharr wanted            # CLI
 LIDARR_URL=... LIDARR_API_KEY=... YANDEX_MUSIC_TOKEN=... python -m flask --app albfetcharr.web.app run  # dev server on :5000
 
-# Run web app in production
+# Run the web app with gunicorn (single process: 1 worker / 4 threads)
 gunicorn "albfetcharr.web.app:create_app()"
 ```
 
+A `Makefile` wraps the common tasks against a local `.venv`:
+`make install | test | lint | fmt | coverage | run`.
+
 The SPA is developed and built in the separate frontend repository; during local UI development run its Vite dev server (it proxies `/api` and `/static` to this backend on `:5000`). To preview the production index served by Flask, drop the frontend's build output into `albfetcharr/web/static/dist/`.
 
-Tests are written with pytest. They cover pure functions (library mapping, path normalization, album status checking, tag clearing) plus mocked HTTP interactions. `mutagen` is a runtime dependency (used in `clear_comments`) and is declared explicitly in `pyproject.toml`. Code is linted with ruff (E, F, W, I rules; line-length=100).
+Tests are written with pytest (HTTP is mocked via `responses`). They cover pure functions (library mapping, path normalization, album status checking, tag clearing) plus mocked HTTP interactions; coverage is scoped to the `albfetcharr` package. `mutagen` is a runtime dependency (used in `clear_comments`) and is declared explicitly in `pyproject.toml`. Code is linted **and** formatted with ruff: lint rules `E`, `F`, `W`, `I` with line length 100, but `E501` is ignored in the linter because `ruff format` owns line wrapping — run `ruff format .` before committing.
 
 ## Conventions
 
