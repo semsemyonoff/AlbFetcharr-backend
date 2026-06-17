@@ -13,6 +13,7 @@ from flask import Flask
 from albfetcharr.sources import clear_registry, register
 from albfetcharr.sources.base import DownloadProgress, Match, SourceProvider
 from albfetcharr.web.routes import register_routes
+from albfetcharr.web.spec import api
 
 
 def _collect_stream_events(test_client, payload, env=None):
@@ -122,6 +123,7 @@ def make_test_app() -> Flask:
         static_folder=str(static_dir),
     )
     register_routes(app)
+    api.register(app)
     return app
 
 
