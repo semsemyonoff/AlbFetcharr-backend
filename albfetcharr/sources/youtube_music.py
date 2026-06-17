@@ -1,20 +1,25 @@
 """YouTube Music source provider.
 
-Search uses the ``ytmusicapi`` library (reliable, no auth) rather than yt-dlp's
-fragile YouTube-Music search extractor. Downloading still uses yt-dlp.
+Search uses the ``ytmusicapi`` library rather than yt-dlp's fragile YouTube-Music
+search extractor. Anonymous ytmusicapi requests work but are increasingly
+bot-gated/throttled by YouTube (empty results), so search optionally authenticates
+via OAuth when a credentials file is configured (see ``_build_ytmusic_client``).
+Downloading still uses yt-dlp.
 """
 
+import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import ClassVar
 
 import yt_dlp
 from mutagen import File as MutagenFile
-from ytmusicapi import YTMusic
+from ytmusicapi import OAuthCredentials, YTMusic
 
 from albfetcharr.config import YtDlpOptions
-from albfetcharr.sources.base import LogFn, Match, SourceProvider
+from albfetcharr.sources.base import DownloadProgress, LogFn, Match, ProgressFn, SourceProvider
 from albfetcharr.sources.ytdlp_base import (
     LogAdapter,
     apply_cookies,
@@ -22,6 +27,70 @@ from albfetcharr.sources.ytdlp_base import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Token fields written by ``ytmusicapi oauth`` into oauth.json. We read them back
+# (plus client_id/client_secret) to authenticate the ytmusicapi client.
+_OAUTH_TOKEN_KEYS = (
+    "scope",
+    "token_type",
+    "access_token",
+    "refresh_token",
+    "expires_at",
+    "expires_in",
+)
+
+
+def _build_ytmusic_client(opts: YtDlpOptions) -> YTMusic:
+    """Build a ytmusicapi client, authenticated via OAuth when configured.
+
+    Anonymous (guest) ytmusicapi requests are increasingly bot-gated/throttled by
+    YouTube (empty search results). When ``opts.ytmusic_oauth_file`` points at an
+    existing credentials file, authenticate with it so requests are not anonymous;
+    otherwise fall back to an anonymous client (unchanged behavior).
+
+    The file is the JSON produced by ``ytmusicapi oauth`` (token fields), optionally
+    augmented with ``client_id``/``client_secret`` (the YouTube OAuth client). Those
+    two may instead be supplied via ``ALBFETCHARR_YTMUSIC_CLIENT_ID`` /
+    ``ALBFETCHARR_YTMUSIC_CLIENT_SECRET``. The token is passed to ytmusicapi as a
+    dict (not the file path) so ytmusicapi never rewrites the user's file on refresh.
+    A plain browser-headers file is also accepted (no client creds needed). Any read
+    or auth error degrades to anonymous rather than breaking search.
+    """
+    path = opts.ytmusic_oauth_file
+    if not path or not os.path.exists(path):
+        return YTMusic()
+
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as e:
+        logger.warning("Could not read YTMusic OAuth file %s: %s; using anonymous search", path, e)
+        return YTMusic()
+
+    client_id = data.get("client_id") or os.environ.get("ALBFETCHARR_YTMUSIC_CLIENT_ID")
+    client_secret = data.get("client_secret") or os.environ.get("ALBFETCHARR_YTMUSIC_CLIENT_SECRET")
+    token = {k: data[k] for k in _OAUTH_TOKEN_KEYS if k in data}
+
+    try:
+        if token and client_id and client_secret:
+            creds = OAuthCredentials(client_id=client_id, client_secret=client_secret)
+            logger.debug("Using authenticated YTMusic client (OAuth) from %s", path)
+            return YTMusic(token, oauth_credentials=creds)
+        if token and not (client_id and client_secret):
+            logger.warning(
+                "YTMusic OAuth token at %s is missing client_id/client_secret "
+                "(set them in the file or via ALBFETCHARR_YTMUSIC_CLIENT_ID/"
+                "ALBFETCHARR_YTMUSIC_CLIENT_SECRET); using anonymous search",
+                path,
+            )
+            return YTMusic()
+        # Not an OAuth token file — treat as a ytmusicapi browser-headers file.
+        logger.debug("Using authenticated YTMusic client (browser headers) from %s", path)
+        return YTMusic(path)
+    except Exception as e:
+        logger.warning("YTMusic auth from %s failed: %s; using anonymous search", path, e)
+        return YTMusic()
+
 
 # Characters that are illegal or hostile in filesystem path segments.
 _FS_HOSTILE = re.compile(r'[/\\<>:"|?*\x00-\x1f]')
@@ -153,6 +222,8 @@ class YouTubeMusicProvider(SourceProvider):
 
     id: ClassVar[str] = "youtube_music"
     name: ClassVar[str] = "YouTube Music"
+    # Downloads track-by-track and reports a DownloadProgress per track.
+    streams_progress: ClassVar[bool] = True
 
     def __init__(self, opts: YtDlpOptions):
         """Initialize the YouTube Music provider.
@@ -162,11 +233,21 @@ class YouTubeMusicProvider(SourceProvider):
         """
         self._opts = opts
 
+    def _ytmusic(self) -> YTMusic:
+        """Create a fresh ytmusicapi client (authenticated when OAuth is configured).
+
+        A new client per call preserves the thread-safety contract (no shared mutable
+        state, no lock) and picks up OAuth credentials via ``_build_ytmusic_client``.
+        """
+        return _build_ytmusic_client(self._opts)
+
     def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
         """Search for an album on YouTube Music via ytmusicapi.
 
-        Thread-safe by construction: a fresh ``YTMusic()`` client is created per
-        call (no auth required for search, no shared mutable state, no lock).
+        Thread-safe by construction: a fresh client is created per call (no shared
+        mutable state, no lock). Authenticates via OAuth when configured (see
+        ``_build_ytmusic_client``) — anonymous requests are bot-gated by YouTube and
+        return empty results — otherwise falls back to anonymous.
 
         Each album result becomes an album-level Match whose ``url`` carries the
         YouTube Music ``browseId`` (``https://music.youtube.com/browse/<browseId>``)
@@ -182,7 +263,7 @@ class YouTubeMusicProvider(SourceProvider):
         Returns:
             List of Match objects (albums), artist-matching results first.
         """
-        yt = YTMusic()
+        yt = self._ytmusic()
         results = yt.search(f"{artist} {album}", filter="albums", limit=limit)
         if not results:
             return []
@@ -242,9 +323,40 @@ class YouTubeMusicProvider(SourceProvider):
             "writethumbnail": True,
             "quiet": True,
             "no_warnings": True,
+            # yt-dlp's own retry knobs: cover transient fragment/HTTP failures
+            # (incl. the intermittent 403 on "unable to download video data")
+            # within a single extraction, before our outer per-track retry loop
+            # in download() falls back to a fresh extraction attempt.
+            "retries": opts.download_retries,
+            "fragment_retries": opts.download_retries,
+            "extractor_retries": opts.download_retries,
         }
         apply_cookies(ydl_opts, opts)
         return ydl_opts
+
+    def _download_track(self, video_url: str, ydl_opts: dict) -> None:
+        """Run a single yt-dlp track download with retries on transient errors.
+
+        Retries the whole extraction up to ``opts.download_retries`` times: yt-dlp's
+        built-in ``retries`` handle in-extraction fragment failures, but errors like
+        HTTP 403 on "unable to download video data" often only clear on a *fresh*
+        extraction, which this outer loop provides. Re-raises the last error if all
+        attempts fail.
+        """
+        attempts = max(1, self._opts.download_retries)
+        last_err: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([video_url])
+                return
+            except yt_dlp.utils.YoutubeDLError as e:
+                last_err = e
+                logger.debug(
+                    "yt-dlp attempt %d/%d failed for %s: %s", attempt, attempts, video_url, e
+                )
+        if last_err is not None:
+            raise last_err
 
     def download(
         self,
@@ -252,6 +364,7 @@ class YouTubeMusicProvider(SourceProvider):
         *,
         quality: str | None = None,
         log: LogFn | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> bool:
         """Download an album from YouTube Music, one track at a time.
 
@@ -269,21 +382,33 @@ class YouTubeMusicProvider(SourceProvider):
         Lidarr context) the provider falls back to the ytmusicapi album
         title/artist so tracks never collapse into ``Unknown/Unknown``.
 
+        Each downloadable track is attempted up to ``opts.download_retries`` times
+        (a fresh extraction per attempt) to ride out transient HTTP 403 / bot-gate
+        failures; yt-dlp's own ``retries``/``extractor_retries`` cover in-extraction
+        blips. When ``on_progress`` is given, a DownloadProgress is reported after
+        each track (running downloaded/existing/skipped/errors counts) for a real
+        per-track progress bar and so the caller can flag a *partial* album.
+
         Partial-album contract (*import what's available*): tracks ytmusicapi
         reports as unavailable (``isAvailable=False`` or missing ``videoId``) are
-        skipped and are **not** errors. Returns True when ≥1 track was downloaded
-        or already existed and no *downloadable* track errored; an explicit
-        ``partial: N/M`` summary is always logged. Returns False on parse failure,
-        zero tracks, or a real per-track download error.
+        skipped and are **not** errors. A track whose download fails after all
+        retries is counted as an error but does **not** fail the whole album.
+        Returns True when ≥1 track was downloaded or already existed (even if some
+        tracks errored — a *partial* success the caller surfaces as a warning); an
+        explicit ``partial: N/M`` summary is always logged. Returns False only on
+        parse failure or zero produced tracks.
 
         Args:
             match: The Match from search(); url carries the browseId, title/artists
                 carry the requested Lidarr album/artist names.
             quality: Unused for YouTube Music (codec/quality come from YtDlpOptions).
             log: Optional callback for progress lines. When None, writes to stdout.
+            on_progress: Optional DownloadProgress callback, invoked once per track.
 
         Returns:
-            True if at least one track was produced and none errored, else False.
+            True if at least one track was produced/existed, else False. Partial
+            albums (some tracks errored) still return True — partiality is conveyed
+            via on_progress' errors count, not the bool.
         """
 
         def _log(msg: str) -> None:
@@ -302,7 +427,7 @@ class YouTubeMusicProvider(SourceProvider):
             return False
 
         try:
-            album = YTMusic().get_album(browse_id)
+            album = self._ytmusic().get_album(browse_id)
         except Exception as e:
             _log(f"Failed to fetch album {browse_id}: {e}")
             return False
@@ -330,12 +455,29 @@ class YouTubeMusicProvider(SourceProvider):
 
         downloaded = existing = skipped = errors = 0
 
+        def _emit(message: str) -> None:
+            """Report per-track progress to the optional on_progress callback."""
+            if on_progress is None:
+                return
+            on_progress(
+                DownloadProgress(
+                    completed=idx,
+                    total=total,
+                    downloaded=downloaded,
+                    existing=existing,
+                    skipped=skipped,
+                    errors=errors,
+                    message=message,
+                )
+            )
+
         for idx, track in enumerate(tracks, start=1):
             video_id = track.get("videoId")
             track_title = track.get("title") or f"Track {idx}"
             if not video_id or track.get("isAvailable") is False:
                 skipped += 1
                 _log(f"Skipping unavailable track {idx}/{total}: {track_title}")
+                _emit(f"Skipped unavailable: {track_title}")
                 continue
 
             track_artist = _join_artists(track.get("artists")) or album_artist
@@ -345,6 +487,7 @@ class YouTubeMusicProvider(SourceProvider):
             if final_path.exists():
                 existing += 1
                 _log(f"Already downloaded {idx}/{total}: {final_path.name}")
+                _emit(f"Already downloaded: {track_title}")
                 continue
 
             outtmpl = str(album_path / f"{stem}.%(ext)s")
@@ -355,8 +498,7 @@ class YouTubeMusicProvider(SourceProvider):
 
             video_url = f"https://www.youtube.com/watch?v={video_id}"
             try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([video_url])
+                self._download_track(video_url, ydl_opts)
             except yt_dlp.utils.YoutubeDLError as e:
                 # FFmpegExtractAudio writes the final file before later post-
                 # processing (e.g. thumbnail embed). If the audio is already on
@@ -365,6 +507,7 @@ class YouTubeMusicProvider(SourceProvider):
                 if not final_path.exists():
                     errors += 1
                     _log(f"yt-dlp failed for track {idx}/{total} ({video_id}): {e}")
+                    _emit(f"Failed: {track_title}")
                     continue
                 _log(f"Post-processing issue for track {idx}/{total} ({video_id}): {e}")
 
@@ -379,6 +522,7 @@ class YouTubeMusicProvider(SourceProvider):
                 log=log,
             )
             downloaded += 1
+            _emit(f"Downloaded: {track_title}")
 
         produced = downloaded + existing
         _log(
@@ -386,6 +530,9 @@ class YouTubeMusicProvider(SourceProvider):
             f"skipped={skipped} errors={errors})"
         )
 
-        if errors:
-            return False
+        # Partial-album contract: import what's available. The album is usable as
+        # long as ≥1 track was produced or already existed — a per-track error no
+        # longer fails the whole album (it is surfaced to the caller as a warning
+        # via the final on_progress' errors count, and reflected in `partial: N/M`).
+        # Only a fully empty result (zero produced) is a hard failure.
         return produced > 0

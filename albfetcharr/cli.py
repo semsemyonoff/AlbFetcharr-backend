@@ -12,6 +12,19 @@ from albfetcharr.lidarr.library_map import validate_library_map
 from albfetcharr.sources import Match, bootstrap_default_providers, get_provider
 
 
+def _run_download(provider, match):
+    """Run provider.download, capturing the final DownloadProgress (if any).
+
+    Returns (ok, progress) where progress is the last DownloadProgress reported
+    via on_progress (None for providers that download an album as one unit). The
+    caller uses progress.errors to tell a *partial* album (ok is True with some
+    failed tracks) apart from a clean success, since the bool alone cannot.
+    """
+    captured = {}
+    ok = provider.download(match, on_progress=lambda p: captured.__setitem__("p", p))
+    return ok, captured.get("p")
+
+
 def detect_source(url: str) -> str | None:
     """Auto-detect the source provider from a URL.
 
@@ -120,7 +133,13 @@ def cmd_wanted(args):
                 track_count=None,
             )
 
-            if ym_provider.download(match):
+            ok, prog = _run_download(ym_provider, match)
+            if ok:
+                if prog and prog.errors:
+                    print(
+                        f"    Partial: {prog.errors} track(s) failed "
+                        f"({prog.downloaded + prog.existing}/{prog.total} available)"
+                    )
                 if provider_id == "yandex" and cfg.yandex_options.clear_comments:
                     album_dir = find_album_dir(
                         download_dir,
@@ -188,8 +207,15 @@ def cmd_download(args):
         track_count=None,
     )
 
-    if provider.download(match):
-        print("Download completed successfully.")
+    ok, prog = _run_download(provider, match)
+    if ok:
+        if prog and prog.errors:
+            print(
+                f"Download completed partially: {prog.errors} track(s) failed "
+                f"({prog.downloaded + prog.existing}/{prog.total} available)."
+            )
+        else:
+            print("Download completed successfully.")
     else:
         print("Download failed.", file=sys.stderr)
         sys.exit(1)

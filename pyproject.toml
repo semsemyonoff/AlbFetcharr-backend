@@ -18,6 +18,12 @@ dependencies = [
     "ytmusicapi==1.11.5",
     "mutagen",
     "yt-dlp==2026.6.9",
+    # EJS challenge-solver scripts for yt-dlp's YouTube extractor. yt-dlp 2026.x
+    # needs BOTH a JS runtime (deno, baked into the image) AND these solver
+    # components to solve YouTube's signature / n-challenge — without it formats
+    # are missing and downloads 403. Bundled locally so no remote fetch
+    # (--remote-components) is needed at runtime.
+    "yt-dlp-ejs==0.8.0",
     "yandex-music-downloader @ https://github.com/llistochek/yandex-music-downloader/archive/refs/tags/v3.5.5.zip",
 ]
 

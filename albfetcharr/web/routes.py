@@ -321,19 +321,24 @@ def register_routes(app: Flask):
         if not download_lock.acquire(blocking=False):
             return jsonify({"error": "Download already in progress"}), 409
 
-        def emit_progress(album_id, item_index, item_total, status, message=""):
-            """Emit a progress event to the SSE stream."""
-            log_queue.put(
-                {
-                    "progress": {
-                        "album_id": album_id,
-                        "item_index": item_index,
-                        "item_total": item_total,
-                        "status": status,
-                        "message": message,
-                    }
-                }
-            )
+        def emit_progress(album_id, item_index, item_total, status, message="", **extra):
+            """Emit a progress event to the SSE stream.
+
+            ``extra`` carries optional fields the frontend renders when present
+            (and ignores otherwise): ``progress`` (0-100 numeric for a real bar),
+            ``track_index``/``track_total`` (per-track position), ``partial`` (the
+            album finished with some failed tracks), and the per-track counts
+            (``downloaded``/``existing``/``skipped``/``errors``).
+            """
+            payload = {
+                "album_id": album_id,
+                "item_index": item_index,
+                "item_total": item_total,
+                "status": status,
+                "message": message,
+            }
+            payload.update(extra)
+            log_queue.put({"progress": payload})
 
         def run_downloads():
             try:
@@ -370,14 +375,49 @@ def register_routes(app: Flask):
                     log(f"[{idx}/{len(items)}] {artist} — {title}{quality_info}")
                     log(f"  Downloading from {provider.name}: {match_url}")
 
-                    # Emit downloading status
+                    # Emit downloading status. For providers that stream per-track
+                    # progress, carry an explicit numeric progress at the band floor
+                    # (10) so the bar holds at the "starting" level until the first
+                    # per-track update climbs from there — without it the frontend
+                    # buckets bare "downloading" to 50%, which then visibly snaps back
+                    # down to the real per-track percent. Providers that don't stream
+                    # progress keep the bare event (frontend's 50% bucket).
+                    dl_extra = {"progress": 10} if provider.streams_progress else {}
                     emit_progress(
                         album_id,
                         idx,
                         len(items),
                         "downloading",
                         f"Downloading from {provider.name}",
+                        **dl_extra,
                     )
+
+                    # Per-track progress: providers that download track-by-track
+                    # (YouTube Music) report a DownloadProgress after each track so
+                    # the bar reflects real progress instead of a single mid bucket.
+                    # We hold the last update to detect a partial album afterwards.
+                    last_progress = {}
+
+                    def _on_progress(p, _album_id=album_id, _idx=idx, _store=last_progress):
+                        _store["p"] = p
+                        # Map track completion into a 10-80 band so the numeric bar
+                        # rises monotonically between "starting" (~10) and the
+                        # post-download buckets ("downloaded" ~85) the frontend uses.
+                        pct = 10 + round((p.completed / p.total) * 70) if p.total else 50
+                        emit_progress(
+                            _album_id,
+                            _idx,
+                            len(items),
+                            "downloading",
+                            p.message or f"Track {p.completed}/{p.total}",
+                            progress=pct,
+                            track_index=p.completed,
+                            track_total=p.total,
+                            downloaded=p.downloaded,
+                            existing=p.existing,
+                            skipped=p.skipped,
+                            errors=p.errors,
+                        )
 
                     # The on-disk album layout must key off the Lidarr album/artist
                     # names (item["title"]/item["artist"]), NOT the source's own
@@ -400,7 +440,9 @@ def register_routes(app: Flask):
                     )
 
                     try:
-                        success = provider.download(match, quality=quality, log=log)
+                        success = provider.download(
+                            match, quality=quality, log=log, on_progress=_on_progress
+                        )
                     except Exception as e:
                         success = False
                         exc_name = type(e).__name__
@@ -424,11 +466,28 @@ def register_routes(app: Flask):
                                 "item_idx": idx,
                             }
                         )
-                        log("  OK")
-                        # Emit downloaded status
-                        emit_progress(
-                            album_id, idx, len(items), "downloaded", "Downloaded, awaiting import"
-                        )
+                        # A partial album (some tracks failed but ≥1 succeeded) is a
+                        # success we still import — surfaced as a warning, not FAILED.
+                        # Same "downloaded" event either way; the partial case just
+                        # carries extra fields the frontend renders as a warning.
+                        p = last_progress.get("p")
+                        partial = bool(p and p.errors > 0)
+                        if partial:
+                            log(f"  OK (partial: {p.errors} track(s) failed)")
+                            message = f"Downloaded with {p.errors} failed track(s), awaiting import"
+                            extra = {
+                                "partial": True,
+                                "errors": p.errors,
+                                "downloaded": p.downloaded,
+                                "existing": p.existing,
+                                "skipped": p.skipped,
+                                "track_total": p.total,
+                            }
+                        else:
+                            log("  OK")
+                            message = "Downloaded, awaiting import"
+                            extra = {}
+                        emit_progress(album_id, idx, len(items), "downloaded", message, **extra)
                     else:
                         log("  FAILED")
                         emit_progress(

@@ -11,8 +11,33 @@ import responses
 from flask import Flask
 
 from albfetcharr.sources import clear_registry, register
-from albfetcharr.sources.base import Match, SourceProvider
+from albfetcharr.sources.base import DownloadProgress, Match, SourceProvider
 from albfetcharr.web.routes import register_routes
+
+
+def _collect_stream_events(test_client, payload, env=None):
+    """Start a download and drain the SSE stream into a list of parsed events."""
+    test_client.post("/api/download/stream/claim")
+    env = env or {
+        "LIDARR_URL": "http://lidarr.test",
+        "LIDARR_API_KEY": "test_key",
+        "DOWNLOAD_DIR": "/downloads",
+    }
+    with patch.dict("os.environ", env):
+        test_client.post(
+            "/api/download",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        stream_response = test_client.get("/api/download/stream")
+    events = []
+    for line in stream_response.get_data(as_text=True).split("\n"):
+        if line.startswith("data: "):
+            try:
+                events.append(json.loads(line[6:]))
+            except json.JSONDecodeError:
+                pass
+    return events
 
 
 class FakeProvider(SourceProvider):
@@ -37,7 +62,9 @@ class FakeProvider(SourceProvider):
             )
         ]
 
-    def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
+    def download(
+        self, match: Match, *, quality: str | None = None, log=None, on_progress=None
+    ) -> bool:
         if log:
             log("Fake download started")
             log("Fake download completed")
@@ -63,7 +90,9 @@ class FakeYouTubeProvider(SourceProvider):
             )
         ]
 
-    def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
+    def download(
+        self, match: Match, *, quality: str | None = None, log=None, on_progress=None
+    ) -> bool:
         if log:
             log("Fake YouTube download started")
             log("Fake YouTube download completed")
@@ -79,7 +108,9 @@ class FakeBrokenProvider(SourceProvider):
     def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
         raise RuntimeError("Simulated search failure")
 
-    def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
+    def download(
+        self, match: Match, *, quality: str | None = None, log=None, on_progress=None
+    ) -> bool:
         return False
 
 
@@ -438,7 +469,9 @@ def test_api_download_passes_lidarr_names_to_provider():
         def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
             return []
 
-        def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
+        def download(
+            self, match: Match, *, quality: str | None = None, log=None, on_progress=None
+        ) -> bool:
             captured.append(match)
             if log:
                 log("captured")
@@ -872,7 +905,9 @@ def test_download_stream_emits_progress(client):
         def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
             return []
 
-        def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
+        def download(
+            self, match: Match, *, quality: str | None = None, log=None, on_progress=None
+        ) -> bool:
             if log:
                 log("Download success")
             return True
@@ -965,7 +1000,9 @@ def test_download_stream_legacy_log_strings_still_work(client):
         def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
             return []
 
-        def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
+        def download(
+            self, match: Match, *, quality: str | None = None, log=None, on_progress=None
+        ) -> bool:
             if log:
                 log("Custom log message from provider")
             return True
@@ -1041,7 +1078,9 @@ def test_importing_status_emitted_per_album_at_batch_boundary(client):
         def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
             return []
 
-        def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
+        def download(
+            self, match: Match, *, quality: str | None = None, log=None, on_progress=None
+        ) -> bool:
             return True
 
     clear_registry()
@@ -1131,7 +1170,9 @@ def test_done_emitted_directly_when_import_path_unset(client):
         def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
             return []
 
-        def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
+        def download(
+            self, match: Match, *, quality: str | None = None, log=None, on_progress=None
+        ) -> bool:
             return True
 
     clear_registry()
@@ -1205,6 +1246,225 @@ def test_done_emitted_directly_when_import_path_unset(client):
     )
 
     # Clean up
+    with _stream_claim_lock:
+        _stream_claim_state["claimed"] = False
+        _stream_claim_state["claimed_at"] = None
+        _stream_claim_state["last_seen"] = None
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_download_emits_numeric_per_track_progress(client):
+    """A provider reporting on_progress yields downloading events with a numeric
+    `progress` and per-track index/total so the UI can render a real bar."""
+    from albfetcharr.web.routes import _stream_claim_lock, _stream_claim_state
+
+    class TrackProvider(SourceProvider):
+        id = "test"
+        name = "Test Provider"
+
+        def search(self, artist, album, limit=5):
+            return []
+
+        def download(self, match, *, quality=None, log=None, on_progress=None):
+            total = 4
+            for i in range(1, total + 1):
+                on_progress(
+                    DownloadProgress(completed=i, total=total, downloaded=i, message=f"t{i}")
+                )
+            return True
+
+    clear_registry()
+    register(TrackProvider())
+    test_client = make_test_app().test_client()
+
+    payload = {
+        "items": [
+            {
+                "artist": "Artist",
+                "title": "Album",
+                "album_id": 7,
+                "source": "test",
+                "match_url": "https://test.com",
+            }
+        ]
+    }
+    events = _collect_stream_events(test_client, payload)
+
+    progress_events = [e["progress"] for e in events if "progress" in e]
+    track_events = [p for p in progress_events if p.get("track_total") == 4]
+    # One downloading event per track, each carrying a numeric progress.
+    assert len(track_events) == 4
+    assert all(p["status"] == "downloading" for p in track_events)
+    assert [p["track_index"] for p in track_events] == [1, 2, 3, 4]
+    pcts = [p["progress"] for p in track_events]
+    assert all(isinstance(x, int) for x in pcts)
+    # Monotonically increasing within the 10-80 band.
+    assert pcts == sorted(pcts)
+    assert 10 <= pcts[0] and pcts[-1] <= 80
+
+    with _stream_claim_lock:
+        _stream_claim_state["claimed"] = False
+        _stream_claim_state["claimed_at"] = None
+        _stream_claim_state["last_seen"] = None
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_initial_downloading_progress_no_50_jump_for_streaming_provider(client):
+    """For a provider that streams per-track progress, the initial 'downloading'
+    event carries an explicit floor progress (10) so the bar does not bucket to
+    50% and then snap back down to the first real per-track percent."""
+    from albfetcharr.web.routes import _stream_claim_lock, _stream_claim_state
+
+    class StreamingProvider(SourceProvider):
+        id = "test"
+        name = "Test Provider"
+        streams_progress = True
+
+        def search(self, artist, album, limit=5):
+            return []
+
+        def download(self, match, *, quality=None, log=None, on_progress=None):
+            on_progress(DownloadProgress(completed=1, total=10, downloaded=1))
+            return True
+
+    clear_registry()
+    register(StreamingProvider())
+    test_client = make_test_app().test_client()
+
+    payload = {
+        "items": [
+            {
+                "artist": "Artist",
+                "title": "Album",
+                "album_id": 7,
+                "source": "test",
+                "match_url": "https://test.com",
+            }
+        ]
+    }
+    events = _collect_stream_events(test_client, payload)
+    downloading = [
+        e["progress"]
+        for e in events
+        if "progress" in e and e["progress"]["status"] == "downloading"
+    ]
+    # The first downloading event is the initial one (no track_total yet) and
+    # carries the floor progress, never the 50 bucket.
+    initial = downloading[0]
+    assert "track_total" not in initial
+    assert initial["progress"] == 10
+    # Every downloading progress stays monotonic (no drop below the floor).
+    pcts = [d["progress"] for d in downloading]
+    assert pcts == sorted(pcts)
+    assert min(pcts) >= 10
+
+    with _stream_claim_lock:
+        _stream_claim_state["claimed"] = False
+        _stream_claim_state["claimed_at"] = None
+        _stream_claim_state["last_seen"] = None
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_initial_downloading_no_numeric_progress_for_nonstreaming_provider(client):
+    """A provider that does NOT stream progress keeps the bare 'downloading' event
+    (no numeric progress), so the frontend's per-status bucket still applies."""
+    from albfetcharr.web.routes import _stream_claim_lock, _stream_claim_state
+
+    class OpaqueProvider(SourceProvider):
+        id = "test"
+        name = "Test Provider"
+        # streams_progress defaults to False
+
+        def search(self, artist, album, limit=5):
+            return []
+
+        def download(self, match, *, quality=None, log=None, on_progress=None):
+            return True
+
+    clear_registry()
+    register(OpaqueProvider())
+    test_client = make_test_app().test_client()
+
+    payload = {
+        "items": [
+            {
+                "artist": "Artist",
+                "title": "Album",
+                "album_id": 8,
+                "source": "test",
+                "match_url": "https://test.com",
+            }
+        ]
+    }
+    events = _collect_stream_events(test_client, payload)
+    downloading = [
+        e["progress"]
+        for e in events
+        if "progress" in e and e["progress"]["status"] == "downloading"
+    ]
+    assert len(downloading) == 1
+    assert "progress" not in downloading[0]
+
+    with _stream_claim_lock:
+        _stream_claim_state["claimed"] = False
+        _stream_claim_state["claimed_at"] = None
+        _stream_claim_state["last_seen"] = None
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_partial_album_marked_downloaded_not_failed(client):
+    """A partial album (some tracks errored, ≥1 succeeded) is reported as
+    downloaded+partial, never failed (import what's available)."""
+    from albfetcharr.web.routes import _stream_claim_lock, _stream_claim_state
+
+    class PartialProvider(SourceProvider):
+        id = "test"
+        name = "Test Provider"
+
+        def search(self, artist, album, limit=5):
+            return []
+
+        def download(self, match, *, quality=None, log=None, on_progress=None):
+            # 5 tracks, 1 errored — still usable -> True.
+            on_progress(
+                DownloadProgress(completed=5, total=5, downloaded=4, errors=1, message="done")
+            )
+            return True
+
+    clear_registry()
+    register(PartialProvider())
+    test_client = make_test_app().test_client()
+
+    payload = {
+        "items": [
+            {
+                "artist": "Artist",
+                "title": "Album",
+                "album_id": 9,
+                "source": "test",
+                "match_url": "https://test.com",
+            }
+        ]
+    }
+    # Import disabled so the terminal state is the downloaded/partial event.
+    with patch("albfetcharr.web.routes.load_lidarr_config") as mock_config:
+        mock_cfg = MagicMock()
+        mock_cfg.base_url = "http://lidarr.test"
+        mock_cfg.api_key = "test_key"
+        mock_cfg.import_path = ""
+        mock_config.return_value = mock_cfg
+        events = _collect_stream_events(test_client, payload)
+
+    progress_events = [e["progress"] for e in events if "progress" in e]
+    statuses = [p["status"] for p in progress_events]
+    assert "failed" not in statuses
+    downloaded_events = [p for p in progress_events if p["status"] == "downloaded"]
+    assert len(downloaded_events) == 1
+    assert downloaded_events[0]["partial"] is True
+    assert downloaded_events[0]["errors"] == 1
+    # The album still completes (import disabled -> done).
+    assert "done" in statuses
+
     with _stream_claim_lock:
         _stream_claim_state["claimed"] = False
         _stream_claim_state["claimed_at"] = None

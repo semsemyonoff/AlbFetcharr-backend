@@ -1,5 +1,6 @@
 """Tests for YouTubeMusicProvider."""
 
+import json
 import shutil
 import subprocess
 from unittest.mock import MagicMock
@@ -13,6 +14,7 @@ from albfetcharr.sources.base import Match
 from albfetcharr.sources.youtube_music import (
     YouTubeMusicProvider,
     _browse_id_from_url,
+    _build_ytmusic_client,
     _sanitize_name,
     _write_track_tags,
 )
@@ -26,6 +28,11 @@ def ytdlp_options():
         path_pattern="%(artist)s/%(album)s/%(track_number)02d - %(title)s.%(ext)s",
         audio_format="flac",
         audio_quality=192,
+        # Single attempt by default so per-track mocks (one side_effect each) are
+        # not consumed by the retry loop; the retry path has its own test.
+        download_retries=1,
+        # No OAuth file → anonymous ytmusicapi client (deterministic across hosts).
+        ytmusic_oauth_file="",
     )
 
 
@@ -435,18 +442,52 @@ class TestDownload:
 
         assert provider.download(_dl_match(), log=log_fn) is False
 
-    def test_one_success_one_error_returns_false(self, provider, mocker, tmp_path):
-        """A single per-track error forces False even when another track succeeded."""
+    def test_one_success_one_error_returns_true_partial(self, provider, mocker, tmp_path):
+        """A partial album (one track errors, one succeeds) returns True and is
+        surfaced as partial via on_progress' errors count (import what's available)."""
         provider._opts.download_dir = str(tmp_path)
         _mock_ytmusic(mocker, _album_data())  # two tracks
         cls, mock_ydl = _mock_ydl(mocker)
         # First track downloads cleanly; the second raises.
         mock_ydl.download.side_effect = [None, yt_dlp.utils.DownloadError("nope")]
         mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+        updates = []
 
-        assert provider.download(_dl_match(), log=None) is False
+        assert provider.download(_dl_match(), log=None, on_progress=updates.append) is True
         # Both tracks were attempted (the error does not abort the loop).
         assert mock_ydl.download.call_count == 2
+        # Partiality is conveyed via the final progress' errors count, not the bool.
+        assert updates[-1].errors == 1
+        assert updates[-1].downloaded == 1
+
+    def test_retries_track_on_transient_error(self, provider, mocker, tmp_path):
+        """A track failing then succeeding within download_retries attempts is kept."""
+        provider._opts.download_dir = str(tmp_path)
+        provider._opts.download_retries = 3
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, mock_ydl = _mock_ydl(mocker)
+        # Fail twice (HTTP 403-style), succeed on the third fresh extraction.
+        mock_ydl.download.side_effect = [
+            yt_dlp.utils.DownloadError("403"),
+            yt_dlp.utils.DownloadError("403"),
+            None,
+        ]
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        assert provider.download(_dl_match(), log=None) is True
+        assert mock_ydl.download.call_count == 3
+
+    def test_retries_exhausted_counts_as_error(self, provider, mocker, tmp_path):
+        """A track failing every attempt (no file on disk) is a hard error -> False
+        for a single-track album, and yt-dlp is retried download_retries times."""
+        provider._opts.download_dir = str(tmp_path)
+        provider._opts.download_retries = 3
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, mock_ydl = _mock_ydl(mocker)
+        mock_ydl.download.side_effect = yt_dlp.utils.DownloadError("403")
+
+        assert provider.download(_dl_match(), log=None) is False
+        assert mock_ydl.download.call_count == 3
 
     def test_post_processing_failure_after_extraction_is_kept(self, provider, mocker, tmp_path):
         """A post-processing error (e.g. thumbnail embed) raised after the audio is
@@ -616,3 +657,106 @@ class TestProvider:
     def test_provider_name(self, provider):
         """Test that provider has correct name."""
         assert provider.name == "YouTube Music"
+
+
+def _oauth_token():
+    """A minimal ytmusicapi OAuth token dict (the fields ytmusicapi oauth writes)."""
+    return {
+        "scope": "https://www.googleapis.com/auth/youtube",
+        "token_type": "Bearer",
+        "access_token": "atk",
+        "refresh_token": "rtk",
+        "expires_at": 9999999999,
+        "expires_in": 3599,
+    }
+
+
+class TestBuildYtMusicClient:
+    """Tests for _build_ytmusic_client (optional OAuth-authenticated search)."""
+
+    def _opts(self, path):
+        return YtDlpOptions(download_dir="/downloads", ytmusic_oauth_file=path)
+
+    def test_no_path_returns_anonymous(self, mocker):
+        mock_ytm = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
+        mock_creds = mocker.patch("albfetcharr.sources.youtube_music.OAuthCredentials")
+        _build_ytmusic_client(self._opts(""))
+        mock_ytm.assert_called_once_with()
+        mock_creds.assert_not_called()
+
+    def test_missing_file_returns_anonymous(self, mocker, tmp_path):
+        mock_ytm = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
+        _build_ytmusic_client(self._opts(str(tmp_path / "nope.json")))
+        mock_ytm.assert_called_once_with()
+
+    def test_oauth_with_creds_in_file(self, mocker, tmp_path):
+        f = tmp_path / "oauth.json"
+        data = {**_oauth_token(), "client_id": "cid", "client_secret": "csec"}
+        f.write_text(json.dumps(data))
+        mock_ytm = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
+        mock_creds = mocker.patch(
+            "albfetcharr.sources.youtube_music.OAuthCredentials", return_value="CREDS"
+        )
+        _build_ytmusic_client(self._opts(str(f)))
+        mock_creds.assert_called_once_with(client_id="cid", client_secret="csec")
+        # Token passed as a dict (not the file path) so ytmusicapi never rewrites it,
+        # with the client creds; client_id/secret are NOT in the token dict.
+        args, kwargs = mock_ytm.call_args
+        assert args[0] == _oauth_token()
+        assert kwargs == {"oauth_credentials": "CREDS"}
+
+    def test_oauth_with_creds_from_env(self, mocker, tmp_path, monkeypatch):
+        f = tmp_path / "oauth.json"
+        f.write_text(json.dumps(_oauth_token()))
+        monkeypatch.setenv("ALBFETCHARR_YTMUSIC_CLIENT_ID", "envid")
+        monkeypatch.setenv("ALBFETCHARR_YTMUSIC_CLIENT_SECRET", "envsec")
+        mock_ytm = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
+        mock_creds = mocker.patch(
+            "albfetcharr.sources.youtube_music.OAuthCredentials", return_value="CREDS"
+        )
+        _build_ytmusic_client(self._opts(str(f)))
+        mock_creds.assert_called_once_with(client_id="envid", client_secret="envsec")
+        assert mock_ytm.call_args.args[0] == _oauth_token()
+
+    def test_oauth_token_without_creds_falls_back_anonymous(self, mocker, tmp_path, monkeypatch):
+        monkeypatch.delenv("ALBFETCHARR_YTMUSIC_CLIENT_ID", raising=False)
+        monkeypatch.delenv("ALBFETCHARR_YTMUSIC_CLIENT_SECRET", raising=False)
+        f = tmp_path / "oauth.json"
+        f.write_text(json.dumps(_oauth_token()))
+        mock_ytm = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
+        _build_ytmusic_client(self._opts(str(f)))
+        mock_ytm.assert_called_once_with()
+
+    def test_browser_headers_file_used_as_path(self, mocker, tmp_path):
+        # A non-OAuth (browser headers) file has no token members → passed by path,
+        # no client creds needed.
+        f = tmp_path / "browser.json"
+        f.write_text(json.dumps({"cookie": "X", "x-goog-authuser": "0"}))
+        mock_ytm = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
+        _build_ytmusic_client(self._opts(str(f)))
+        mock_ytm.assert_called_once_with(str(f))
+
+    def test_malformed_json_falls_back_anonymous(self, mocker, tmp_path):
+        f = tmp_path / "bad.json"
+        f.write_text("{not valid json")
+        mock_ytm = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
+        _build_ytmusic_client(self._opts(str(f)))
+        mock_ytm.assert_called_once_with()
+
+    def test_auth_error_falls_back_anonymous(self, mocker, tmp_path):
+        f = tmp_path / "oauth.json"
+        data = {**_oauth_token(), "client_id": "cid", "client_secret": "csec"}
+        f.write_text(json.dumps(data))
+        mocker.patch(
+            "albfetcharr.sources.youtube_music.OAuthCredentials",
+            side_effect=RuntimeError("boom"),
+        )
+        # First YTMusic call (authenticated) raises; the fallback YTMusic() must work.
+        mock_ytm = mocker.patch(
+            "albfetcharr.sources.youtube_music.YTMusic",
+            side_effect=[MagicMock()],
+        )
+        # The authenticated branch raises via OAuthCredentials before YTMusic; the
+        # except clause then calls YTMusic() once for the anonymous fallback.
+        _build_ytmusic_client(self._opts(str(f)))
+        mock_ytm.assert_called_once_with()

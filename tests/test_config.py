@@ -94,3 +94,40 @@ class TestLoadYtDlpOptions:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ALBFETCHARR_YTDLP_COOKIES", None)
             assert load_ytdlp_options().cookies_file is None
+
+    def test_download_retries_default(self):
+        """download_retries defaults to 3 when the env var is unset."""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ALBFETCHARR_YTDLP_RETRIES", None)
+            assert load_ytdlp_options().download_retries == 3
+
+    def test_download_retries_from_env(self):
+        """ALBFETCHARR_YTDLP_RETRIES is parsed into download_retries."""
+        with patch.dict(os.environ, {"ALBFETCHARR_YTDLP_RETRIES": "5"}, clear=False):
+            assert load_ytdlp_options().download_retries == 5
+
+    def test_download_retries_clamped_to_at_least_one(self):
+        """A zero/negative or invalid value clamps to a single attempt (no retry)."""
+        with patch.dict(os.environ, {"ALBFETCHARR_YTDLP_RETRIES": "0"}, clear=False):
+            assert load_ytdlp_options().download_retries == 1
+        with patch.dict(os.environ, {"ALBFETCHARR_YTDLP_RETRIES": "nan"}, clear=False):
+            # invalid -> default 3 (max(1, 3))
+            assert load_ytdlp_options().download_retries == 3
+
+    def test_ytmusic_oauth_file_default(self):
+        """ytmusic_oauth_file defaults to the canonical /config path when unset."""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ALBFETCHARR_YTMUSIC_OAUTH", None)
+            assert load_ytdlp_options().ytmusic_oauth_file == "/config/ytmusic_oauth.json"
+
+    def test_ytmusic_oauth_file_from_env(self):
+        """ALBFETCHARR_YTMUSIC_OAUTH overrides the oauth file path."""
+        with patch.dict(
+            os.environ, {"ALBFETCHARR_YTMUSIC_OAUTH": "/config/custom.json"}, clear=False
+        ):
+            assert load_ytdlp_options().ytmusic_oauth_file == "/config/custom.json"
+
+    def test_ytmusic_oauth_file_empty_env_uses_default(self):
+        """An empty env var coalesces back to the default path (compose passes blank)."""
+        with patch.dict(os.environ, {"ALBFETCHARR_YTMUSIC_OAUTH": ""}, clear=False):
+            assert load_ytdlp_options().ytmusic_oauth_file == "/config/ytmusic_oauth.json"
