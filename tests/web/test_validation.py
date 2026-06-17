@@ -88,6 +88,16 @@ def test_search_album_missing_album_id(client):
     assert resp.status_code == 422
 
 
+def test_search_form_content_type_returns_415(client):
+    """A form-encoded POST leaves spectree's context.json None → clean 415, not a 500."""
+    resp = client.post(
+        "/api/search",
+        data={"albums": "x"},
+        content_type="application/x-www-form-urlencoded",
+    )
+    assert resp.status_code == 415
+
+
 # --- album_id coercion ---
 
 
@@ -164,6 +174,16 @@ def test_download_items_not_a_list(client):
         content_type="application/json",
     )
     assert resp.status_code == 422
+
+
+def test_download_form_content_type_returns_415(client):
+    """A form-encoded POST leaves spectree's context.json None → clean 415, not a 500."""
+    resp = client.post(
+        "/api/download",
+        data={"items": "x"},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 415
 
 
 def test_download_valid_items_accepted(client):

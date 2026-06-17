@@ -178,7 +178,13 @@ def register_routes(app: Flask):
         tags=["search"],
     )
     def api_search():
-        data = request.context.json.model_dump()
+        # spectree only populates request.context.json for JSON content types; a
+        # form/multipart POST leaves it None (no 422 raised). Guard it so a wrong
+        # content type returns a clean 415 instead of crashing on model_dump().
+        body = request.context.json
+        if body is None:
+            return jsonify({"error": "Request body must be JSON"}), 415
+        data = body.model_dump()
         albums = data["albums"]
         sources = data["sources"]
 
@@ -326,7 +332,11 @@ def register_routes(app: Flask):
         tags=["download"],
     )
     def api_download():
-        items = request.context.json.model_dump()["items"]
+        # See api_search: guard against a non-JSON content type leaving context.json None.
+        body = request.context.json
+        if body is None:
+            return jsonify({"error": "Request body must be JSON"}), 415
+        items = body.model_dump()["items"]
 
         for item in items:
             try:
