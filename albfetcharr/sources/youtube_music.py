@@ -1,10 +1,14 @@
-"""YouTube Music source provider via yt-dlp."""
+"""YouTube Music source provider.
+
+Search uses the ``ytmusicapi`` library (reliable, no auth) rather than yt-dlp's
+fragile YouTube-Music search extractor. Downloading still uses yt-dlp.
+"""
 
 import logging
 from typing import ClassVar
-from urllib.parse import quote_plus
 
 import yt_dlp
+from ytmusicapi import YTMusic
 
 from albfetcharr.config import YtDlpOptions
 from albfetcharr.sources.base import LogFn, Match, SourceProvider
@@ -13,15 +17,22 @@ from albfetcharr.sources.ytdlp_base import (
     album_dir_from_info,
     build_ydl_opts,
     make_progress_hook,
-    parse_search_entry,
     repair_tags_from_info,
 )
 
 logger = logging.getLogger(__name__)
 
 
+def _largest_thumbnail(thumbnails: list[dict] | None) -> str | None:
+    """Return the URL of the highest-resolution thumbnail, or None."""
+    if not thumbnails:
+        return None
+    best = max(thumbnails, key=lambda t: t.get("width") or 0)
+    return best.get("url")
+
+
 class YouTubeMusicProvider(SourceProvider):
-    """Source provider for YouTube Music via yt-dlp."""
+    """Source provider for YouTube Music (ytmusicapi search + yt-dlp download)."""
 
     id: ClassVar[str] = "youtube_music"
     name: ClassVar[str] = "YouTube Music"
@@ -35,17 +46,16 @@ class YouTubeMusicProvider(SourceProvider):
         self._opts = opts
 
     def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
-        """Search for an album on YouTube Music.
+        """Search for an album on YouTube Music via ytmusicapi.
 
-        Creates a new YoutubeDL instance per call for thread safety.
+        Thread-safe by construction: a fresh ``YTMusic()`` client is created per
+        call (no auth required for search, no shared mutable state, no lock).
 
-        yt-dlp has no ``ytmsearch`` query prefix — the only way to reach the
-        YouTube Music search is its ``YoutubeMusicSearchURL`` extractor, driven by
-        a ``https://music.youtube.com/search?q=...`` URL. The ``#Albums`` fragment
-        restricts results to the Albums shelf, and ``playlist_items=1-limit`` caps
-        how many albums are resolved. Resolution is intentionally *not* flat: flat
-        entries are bare ``browse/`` URLs with no title/track count, whereas
-        resolving each album yields a playlist dict with the metadata the UI needs.
+        Each album result becomes an album-level Match whose ``url`` carries the
+        YouTube Music ``browseId`` (``https://music.youtube.com/browse/<browseId>``)
+        so ``download()`` can re-resolve the album track list. Results whose artist
+        matches the query (lowercase substring, either direction) are ordered first,
+        mirroring the Yandex provider, then sliced to ``limit``.
 
         Args:
             artist: Artist name.
@@ -53,39 +63,44 @@ class YouTubeMusicProvider(SourceProvider):
             limit: Maximum number of results to return.
 
         Returns:
-            List of Match objects (album playlists), most relevant first.
+            List of Match objects (albums), artist-matching results first.
         """
-        query = quote_plus(f"{artist} {album}")
-        url = f"https://music.youtube.com/search?q={query}#Albums"
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "playlist_items": f"1-{limit}",
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-
-        if not info or not info.get("entries"):
+        yt = YTMusic()
+        results = yt.search(f"{artist} {album}", filter="albums", limit=limit)
+        if not results:
             return []
 
+        artist_lower = artist.lower()
+
+        def _artist_match(result: dict) -> bool:
+            for a in result.get("artists") or []:
+                name = (a.get("name") or "").lower()
+                if name and (artist_lower in name or name in artist_lower):
+                    return True
+            return False
+
+        reordered = sorted(results, key=lambda r: 0 if _artist_match(r) else 1)
+
         matches = []
-        for entry in info["entries"]:
-            if not isinstance(entry, dict) or entry.get("_type") != "playlist":
+        for result in reordered[:limit]:
+            browse_id = result.get("browseId")
+            if not browse_id:
                 continue
-            match = parse_search_entry(entry, source=self.id)
-            if not match:
-                continue
-            # yt-dlp prefixes the Albums-shelf title with "Album - "; strip it for
-            # a clean display name.
-            match.title = match.title.removeprefix("Album - ")
-            # YouTube Music album playlists don't expose the artist, so
-            # parse_search_entry falls back to "Unknown" — substitute the queried
-            # artist, which is what the candidate-matching score compares against.
-            if not entry.get("uploader"):
-                match.artists = artist
-            matches.append(match)
+            names = [a.get("name") for a in (result.get("artists") or []) if a.get("name")]
+            artists = ", ".join(names) if names else artist
+            year = result.get("year")
+            track_count = result.get("trackCount")
+            matches.append(
+                Match(
+                    source=self.id,
+                    url=f"https://music.youtube.com/browse/{browse_id}",
+                    title=result.get("title") or "",
+                    artists=artists,
+                    cover_url=_largest_thumbnail(result.get("thumbnails")),
+                    year=int(year) if year and str(year).isdigit() else None,
+                    track_count=int(track_count) if track_count else None,
+                )
+            )
 
         return matches
 

@@ -27,166 +27,153 @@ def provider(ytdlp_options):
     return YouTubeMusicProvider(ytdlp_options)
 
 
+def _album_result(
+    *,
+    browse_id="MPREb_abc",
+    title="Discovery",
+    artists=(("Daft Punk", "UCabc"),),
+    year="2001",
+    thumbnails=None,
+    track_count=None,
+):
+    """Build a ytmusicapi search album result dict (shape from real 1.11.5 output)."""
+    result = {
+        "category": "Albums",
+        "resultType": "album",
+        "title": title,
+        "type": "Album",
+        "browseId": browse_id,
+        "year": year,
+        "isExplicit": False,
+        "artists": [{"name": n, "id": i} for n, i in artists],
+        "thumbnails": thumbnails
+        if thumbnails is not None
+        else [
+            {"url": "https://img/small.jpg", "width": 60, "height": 60},
+            {"url": "https://img/large.jpg", "width": 544, "height": 544},
+        ],
+    }
+    if track_count is not None:
+        result["trackCount"] = track_count
+    return result
+
+
 class TestSearch:
     """Test YouTubeMusicProvider.search()."""
 
     def test_search_empty_response(self, provider, mocker):
-        """Test search with empty response."""
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {"entries": []}
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+        """Test search with empty (None) response returns []."""
+        mock_yt = MagicMock()
+        mock_yt.search.return_value = None
+        mock_cls = mocker.patch("albfetcharr.sources.youtube_music.YTMusic", return_value=mock_yt)
 
         results = provider.search("Artist", "Album", limit=5)
 
         assert results == []
-        mock_ydl.extract_info.assert_called_once()
-        args = mock_ydl.extract_info.call_args[0]
-        assert args[0].startswith("https://music.youtube.com/search?q=")
-        assert "Artist+Album" in args[0]
-        assert args[0].endswith("#Albums")
+        # Search builds a fresh client per call and runs an albums-filtered query.
+        mock_cls.assert_called_once_with()
+        mock_yt.search.assert_called_once_with("Artist Album", filter="albums", limit=5)
 
-    def test_search_returns_only_playlists(self, provider, mocker):
-        """Test that search returns only playlist entries, dropping standalone tracks."""
-        entries = [
-            {
-                "_type": "playlist",
-                "url": "https://music.youtube.com/playlist?list=PL123",
-                "title": "Album Title",
-                "uploader": "Artist",
-                "playlist_count": 10,
-            },
-            {
-                "_type": "url",
-                "url": "https://www.youtube.com/watch?v=ABC",
-                "title": "Full Album Video",
-                "uploader": "Artist",
-            },
-            {
-                # Entry without URL should be filtered by parse_search_entry
-                "title": "No URL Entry",
-                "uploader": "Artist",
-            },
+    def test_search_empty_list_returns_empty(self, provider, mocker):
+        """Test search with an empty list returns []."""
+        mock_yt = MagicMock()
+        mock_yt.search.return_value = []
+        mocker.patch("albfetcharr.sources.youtube_music.YTMusic", return_value=mock_yt)
+
+        assert provider.search("Artist", "Album", limit=5) == []
+
+    def test_search_maps_match_fields(self, provider, mocker):
+        """Album result maps to a Match with browseId in url and largest thumbnail."""
+        mock_yt = MagicMock()
+        mock_yt.search.return_value = [
+            _album_result(browse_id="MPREb_xyz", title="Discovery", track_count=14)
         ]
-
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {"entries": entries}
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        results = provider.search("Artist", "Album", limit=5)
-
-        assert len(results) == 1
-        assert results[0].title == "Album Title"
-
-    def test_search_multiple_playlists(self, provider, mocker):
-        """Test search returning multiple playlists."""
-        entries = [
-            {
-                "_type": "playlist",
-                "url": "https://music.youtube.com/playlist?list=PL1",
-                "title": "Album 1",
-                "uploader": "Artist 1",
-                "release_year": 2023,
-                "playlist_count": 12,
-                "thumbnails": [{"url": "https://example.com/cover1.jpg"}],
-            },
-            {
-                "_type": "playlist",
-                "url": "https://music.youtube.com/playlist?list=PL2",
-                "title": "Album 2",
-                "uploader": "Artist 2",
-                "release_year": 2024,
-                "playlist_count": 10,
-                "thumbnails": [{"url": "https://example.com/cover2.jpg"}],
-            },
-        ]
-
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {"entries": entries}
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        results = provider.search("Artist", "Album", limit=5)
-
-        assert len(results) == 2
-        assert results[0].source == "youtube_music"
-        assert results[0].title == "Album 1"
-        assert results[1].title == "Album 2"
-
-    def test_search_exception_propagates(self, provider, mocker):
-        """Test that search exceptions propagate to the caller for error isolation."""
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.side_effect = Exception("Network error")
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        with pytest.raises(Exception, match="Network error"):
-            provider.search("Artist", "Album", limit=5)
-
-    def test_search_none_entries_returns_empty(self, provider, mocker):
-        """Test that search with None entries returns empty list."""
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = None
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        results = provider.search("Artist", "Album", limit=5)
-
-        assert results == []
-
-    def test_search_limit_parameter(self, provider, mocker):
-        """Test that search caps the number of resolved albums via playlist_items."""
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {"entries": []}
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mock_ydl_class = mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        provider.search("Artist", "Album", limit=3)
-
-        ydl_opts = mock_ydl_class.call_args[0][0]
-        assert ydl_opts["playlist_items"] == "1-3"
-        # Albums must be resolved (not flat) to carry title/track-count metadata.
-        assert "extract_flat" not in ydl_opts
-
-    def test_search_resolved_playlist_shape(self, provider, mocker):
-        """Albums from the music.youtube.com search resolve to playlists whose
-        download URL is under webpage_url, with no uploader and an "Album - "
-        title prefix — the real-world shape that the old ytmsearch path never hit.
-        """
-        entries = [
-            {
-                "_type": "playlist",
-                "url": None,
-                "webpage_url": "https://www.youtube.com/playlist?list=OLAK5uy_abc",
-                "title": "Album - Discovery",
-                "uploader": None,
-                "playlist_count": 14,
-                "thumbnails": [{"url": "https://example.com/cover.jpg"}],
-            },
-        ]
-
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {"entries": entries}
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+        mocker.patch("albfetcharr.sources.youtube_music.YTMusic", return_value=mock_yt)
 
         results = provider.search("Daft Punk", "Discovery", limit=5)
 
         assert len(results) == 1
         match = results[0]
-        assert match.url == "https://www.youtube.com/playlist?list=OLAK5uy_abc"
-        assert match.title == "Discovery"  # "Album - " prefix stripped
-        assert match.artists == "Daft Punk"  # falls back to the queried artist
+        assert match.source == "youtube_music"
+        assert match.url == "https://music.youtube.com/browse/MPREb_xyz"
+        assert match.title == "Discovery"
+        assert match.artists == "Daft Punk"
+        assert match.year == 2001
         assert match.track_count == 14
-        assert match.cover_url == "https://example.com/cover.jpg"
+        assert match.cover_url == "https://img/large.jpg"
+
+    def test_search_joins_multiple_artists(self, provider, mocker):
+        """Multiple artists are joined comma-separated."""
+        mock_yt = MagicMock()
+        mock_yt.search.return_value = [
+            _album_result(artists=(("Daft Punk", "UC1"), ("Pharrell", "UC2")))
+        ]
+        mocker.patch("albfetcharr.sources.youtube_music.YTMusic", return_value=mock_yt)
+
+        results = provider.search("Daft Punk", "Album", limit=5)
+
+        assert results[0].artists == "Daft Punk, Pharrell"
+
+    def test_search_falls_back_to_queried_artist(self, provider, mocker):
+        """When a result has no artists, fall back to the queried artist."""
+        mock_yt = MagicMock()
+        mock_yt.search.return_value = [_album_result(artists=())]
+        mocker.patch("albfetcharr.sources.youtube_music.YTMusic", return_value=mock_yt)
+
+        results = provider.search("Queried Artist", "Album", limit=5)
+
+        assert results[0].artists == "Queried Artist"
+
+    def test_search_skips_results_without_browse_id(self, provider, mocker):
+        """Results lacking a browseId are dropped."""
+        good = _album_result(browse_id="MPREb_good")
+        bad = _album_result(browse_id=None)
+        bad.pop("browseId")
+        mock_yt = MagicMock()
+        mock_yt.search.return_value = [bad, good]
+        mocker.patch("albfetcharr.sources.youtube_music.YTMusic", return_value=mock_yt)
+
+        results = provider.search("Daft Punk", "Album", limit=5)
+
+        assert len(results) == 1
+        assert results[0].url.endswith("MPREb_good")
+
+    def test_search_orders_artist_matches_first(self, provider, mocker):
+        """Artist-matching results are ordered before non-matching ones."""
+        non_match = _album_result(
+            browse_id="MPREb_other", title="Other", artists=(("Some Cover Band", "UCx"),)
+        )
+        match = _album_result(browse_id="MPREb_real", title="Real", artists=(("Daft Punk", "UCy"),))
+        mock_yt = MagicMock()
+        mock_yt.search.return_value = [non_match, match]
+        mocker.patch("albfetcharr.sources.youtube_music.YTMusic", return_value=mock_yt)
+
+        results = provider.search("Daft Punk", "Album", limit=5)
+
+        assert [m.title for m in results] == ["Real", "Other"]
+
+    def test_search_slices_to_limit(self, provider, mocker):
+        """Results are sliced to the requested limit."""
+        mock_yt = MagicMock()
+        mock_yt.search.return_value = [
+            _album_result(browse_id=f"MPREb_{i}", title=f"Album {i}") for i in range(5)
+        ]
+        mocker.patch("albfetcharr.sources.youtube_music.YTMusic", return_value=mock_yt)
+
+        results = provider.search("Daft Punk", "Album", limit=2)
+
+        assert len(results) == 2
+
+    def test_search_missing_year_is_none(self, provider, mocker):
+        """A missing/non-numeric year maps to None."""
+        mock_yt = MagicMock()
+        mock_yt.search.return_value = [_album_result(year=None)]
+        mocker.patch("albfetcharr.sources.youtube_music.YTMusic", return_value=mock_yt)
+
+        results = provider.search("Daft Punk", "Album", limit=5)
+
+        assert results[0].year is None
+        assert results[0].track_count is None
 
 
 class TestDownload:
