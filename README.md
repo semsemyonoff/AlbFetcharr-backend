@@ -146,18 +146,23 @@ AlbFetcharr поддерживает несколько источников д�
 
 Анонимный поиск через `ytmusicapi` со временем начинает «бот-гейтиться» YouTube — запрос отвечает успешно, но **результаты пустые**. Чтобы запросы не были анонимными, поиск можно авторизовать через OAuth. Это **опционально**: без файла всё работает как раньше (анонимно).
 
-Что понадобится — один JSON-файл с токеном (он сам обновляется, не протухает как cookies) и OAuth-клиент Google (`client_id` + `client_secret`, создаётся один раз):
+Понадобятся две вещи: **OAuth-клиент Google** (`client_id` + `client_secret`) и **файл с токеном** (`oauth.json`). Важно понимать разницу:
 
-1. **Создайте OAuth-клиент в Google Cloud.** В [Google Cloud Console](https://console.cloud.google.com/) → создайте проект → включите **YouTube Data API v3** → *Credentials* → *Create credentials* → *OAuth client ID* → тип **TVs and Limited Input devices**. Получите `client_id` и `client_secret`.
+- `client_id` / `client_secret` — это «удостоверение приложения». Сами по себе доступа к аккаунту не дают и **не выдаются в виде готового файла** — их нужно один раз создать в Google Cloud руками (шаг 1).
+- `oauth.json` — это уже сам вход: токен (`access_token` / `refresh_token`), привязанный к вашему аккаунту. Его **генерирует** Google в обмен на client_id/secret + авторизацию в браузере (шаг 2). Токен сам обновляется и не протухает как cookies.
+
+1. **Создайте OAuth-клиент в Google Cloud.** В [Google Cloud Console](https://console.cloud.google.com/) → создайте проект → включите **YouTube Data API v3** → *Credentials* → *Create credentials* → *OAuth client ID* → тип **TVs and Limited Input devices**. Получите `client_id` и `client_secret`. (Раньше `ytmusicapi` использовал встроенный публичный client и этот шаг был не нужен, но Google его отозвал — теперь свой клиент обязателен.)
 2. **Сгенерируйте токен.** На любой машине с Python: `pip install ytmusicapi`, затем
    ```bash
    ytmusicapi oauth --client-id <CLIENT_ID> --client-secret <CLIENT_SECRET>
    ```
-   Пройдите авторизацию в браузере по показанной ссылке. Команда создаст файл `oauth.json` с токеном (`access_token`, `refresh_token`, …).
-3. **Передайте client_id/secret приложению** одним из способов:
-   - дописать в `oauth.json` два поля: `"client_id": "...", "client_secret": "..."` (тогда всё в одном файле), **или**
+   Пройдите авторизацию в браузере по показанной ссылке. Команда создаст файл `oauth.json` с токеном.
+3. **Смонтируйте `oauth.json` в контейнер** по пути из `ALBFETCHARR_YTMUSIC_OAUTH` (по умолчанию `/config/ytmusic_oauth.json`). Это нужно **всегда** — это и есть сам токен. Файл подхватывается автоматически, только если существует; иначе поиск остаётся анонимным.
+4. **Дайте приложению client_id/secret** — одним из двух способов (на выбор, не оба):
+   - дописать в тот же `oauth.json` два поля: `"client_id": "...", "client_secret": "..."` (тогда всё в одном файле), **или**
    - задать переменные `ALBFETCHARR_YTMUSIC_CLIENT_ID` и `ALBFETCHARR_YTMUSIC_CLIENT_SECRET`.
-4. **Смонтируйте файл в контейнер** по пути из `ALBFETCHARR_YTMUSIC_OAUTH` (по умолчанию `/config/ytmusic_oauth.json`) и перезапустите сервис. Файл подхватывается автоматически, только если существует; иначе поиск остаётся анонимным.
+
+   Это отдельный шаг от пункта 3: токен (`oauth.json`) обязателен в любом случае, а здесь вы лишь сообщаете, **откуда взять** client_id/secret к нему. После этого перезапустите сервис.
 
 Приложение читает токен из файла как dict и **не перезаписывает** ваш файл при обновлении токена. Если файл повреждён или не хватает `client_id`/`client_secret`, поиск тихо откатывается к анонимному (в логах — предупреждение). Подробнее про получение токена — в [документации ytmusicapi](https://ytmusicapi.readthedocs.io/en/stable/setup/oauth.html).
 
