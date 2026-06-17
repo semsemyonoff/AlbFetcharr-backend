@@ -1,13 +1,21 @@
 """Tests for YouTubeMusicProvider."""
 
+import shutil
+import subprocess
 from unittest.mock import MagicMock
 
 import pytest
 import yt_dlp
+from mutagen import File as MutagenFile
 
 from albfetcharr.config import YtDlpOptions
 from albfetcharr.sources.base import Match
-from albfetcharr.sources.youtube_music import YouTubeMusicProvider
+from albfetcharr.sources.youtube_music import (
+    YouTubeMusicProvider,
+    _browse_id_from_url,
+    _sanitize_name,
+    _write_track_tags,
+)
 
 
 @pytest.fixture
@@ -176,207 +184,301 @@ class TestSearch:
         assert results[0].track_count is None
 
 
+def _track(*, video_id="vid", title="Track", available=True, artists=(("Daft Punk", "UC1"),)):
+    """Build a ytmusicapi get_album track dict (shape from real 1.11.5 output)."""
+    return {
+        "videoId": video_id,
+        "title": title,
+        "isAvailable": available,
+        "artists": [{"name": n, "id": i} for n, i in artists],
+    }
+
+
+def _album_data(*, year="2001", title="Discovery", tracks=None):
+    """Build a ytmusicapi get_album response (shape from real 1.11.5 output)."""
+    if tracks is None:
+        tracks = [
+            _track(video_id="vid1", title="One"),
+            _track(video_id="vid2", title="Two"),
+        ]
+    return {"title": title, "year": year, "trackCount": len(tracks), "tracks": tracks}
+
+
+def _dl_match(
+    url="https://music.youtube.com/browse/MPREb_abc",
+    title="Lidarr Album",
+    artists="Lidarr Artist",
+):
+    """Build a download Match carrying the browseId in url and Lidarr names."""
+    return Match(
+        source="youtube_music",
+        url=url,
+        title=title,
+        artists=artists,
+        cover_url=None,
+        year=2001,
+        track_count=2,
+    )
+
+
+def _mock_ytmusic(mocker, album_data):
+    """Patch the YTMusic import site so get_album returns album_data."""
+    mock_yt = MagicMock()
+    mock_yt.get_album.return_value = album_data
+    return mocker.patch("albfetcharr.sources.youtube_music.YTMusic", return_value=mock_yt)
+
+
+def _mock_ydl(mocker):
+    """Patch yt_dlp.YoutubeDL with a context-manager-aware mock."""
+    mock_ydl = MagicMock()
+    mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
+    mock_ydl.__exit__ = MagicMock(return_value=False)
+    cls = mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+    return cls, mock_ydl
+
+
+class TestSanitizeName:
+    """Test the filesystem-name sanitizer."""
+
+    def test_strips_hostile_chars(self):
+        assert _sanitize_name("AC/DC: Live?") == "ACDC Live"
+
+    def test_collapses_whitespace(self):
+        assert _sanitize_name("  a   b  ") == "a b"
+
+    def test_empty_falls_back_to_unknown(self):
+        assert _sanitize_name("///") == "Unknown"
+        assert _sanitize_name("") == "Unknown"
+
+
+class TestBrowseIdFromUrl:
+    """Test the browseId URL parser."""
+
+    def test_parses_browse_id(self):
+        assert _browse_id_from_url("https://music.youtube.com/browse/MPREb_x") == "MPREb_x"
+
+    def test_strips_trailing_segments(self):
+        assert _browse_id_from_url("https://music.youtube.com/browse/MPREb_x/more?a=1") == "MPREb_x"
+
+    def test_returns_none_without_marker(self):
+        assert _browse_id_from_url("https://example.com/foo") is None
+
+    def test_returns_none_for_empty(self):
+        assert _browse_id_from_url(None) is None
+        assert _browse_id_from_url("") is None
+
+
 class TestDownload:
-    """Test YouTubeMusicProvider.download()."""
+    """Test YouTubeMusicProvider.download() (per-track via ytmusicapi)."""
 
-    def test_download_success(self, provider, mocker):
-        """Test successful download."""
-        match = Match(
-            source="youtube_music",
-            url="https://music.youtube.com/playlist?list=PL123",
-            title="Album",
-            artists="Artist",
-            cover_url=None,
-            year=2023,
-            track_count=10,
-        )
-
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {
-            "title": "Album",
-            "entries": [{"filepath": "/downloads/Artist/Album/01.flac"}],
-        }
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        result = provider.download(match, quality=None, log=None)
-
-        assert result is True
-        mock_ydl.extract_info.assert_called_once()
-        args = mock_ydl.extract_info.call_args
-        assert args[0] == (match.url,)
-        assert args[1]["download"] is True
-
-    def test_download_with_log_callback(self, provider, mocker):
-        """Test download with log callback installs hooks."""
-        match = Match(
-            source="youtube_music",
-            url="https://music.youtube.com/playlist?list=PL123",
-            title="Album",
-            artists="Artist",
-            cover_url=None,
-            year=2023,
-            track_count=10,
-        )
-        log_fn = MagicMock()
-
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {"entries": []}
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-
-        mock_ydl_class = mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        result = provider.download(match, quality=None, log=log_fn)
-
-        assert result is True
-        # Verify that progress_hooks and logger were set in the options
-        # The options dict is passed as the first positional argument
-        call_args = mock_ydl_class.call_args[0]
-        assert len(call_args) > 0
-        ydl_opts = call_args[0]
-        assert "progress_hooks" in ydl_opts
-        assert "logger" in ydl_opts
-
-    def test_download_error_returns_false(self, provider, mocker):
-        """Test download error returns False."""
-        match = Match(
-            source="youtube_music",
-            url="https://music.youtube.com/playlist?list=PL123",
-            title="Album",
-            artists="Artist",
-            cover_url=None,
-            year=2023,
-            track_count=10,
-        )
-        log_fn = MagicMock()
-
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.side_effect = yt_dlp.utils.DownloadError("Download failed")
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        result = provider.download(match, quality=None, log=log_fn)
-
+    def test_unparseable_url_returns_false(self, provider, mocker):
+        """An unparseable URL returns False without touching ytmusicapi."""
+        mock_cls = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
+        result = provider.download(_dl_match(url="https://example.com/nope"), log=None)
         assert result is False
+        mock_cls.assert_not_called()
+
+    def test_get_album_error_returns_false(self, provider, mocker):
+        """A get_album failure returns False and logs."""
+        mock_yt = MagicMock()
+        mock_yt.get_album.side_effect = RuntimeError("boom")
+        mocker.patch("albfetcharr.sources.youtube_music.YTMusic", return_value=mock_yt)
+        log_fn = MagicMock()
+        assert provider.download(_dl_match(), log=log_fn) is False
         log_fn.assert_called()
 
-    def test_download_none_info_returns_false(self, provider, mocker):
-        """Test that None info_dict returns False."""
-        match = Match(
-            source="youtube_music",
-            url="https://music.youtube.com/playlist?list=PL123",
-            title="Album",
-            artists="Artist",
-            cover_url=None,
-            year=2023,
-            track_count=10,
+    def test_zero_tracks_returns_false(self, provider, mocker):
+        """An album with no tracks returns False without downloading."""
+        _mock_ytmusic(mocker, _album_data(tracks=[]))
+        cls, _ = _mock_ydl(mocker)
+        assert provider.download(_dl_match(), log=None) is False
+        cls.assert_not_called()
+
+    def test_full_success_per_track_watch_urls(self, provider, mocker, tmp_path):
+        """Each available track downloads a watch?v= URL; tags use Lidarr names."""
+        provider._opts.download_dir = str(tmp_path)
+        _mock_ytmusic(mocker, _album_data())
+        cls, mock_ydl = _mock_ydl(mocker)
+        tags = mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        assert provider.download(_dl_match(), log=None) is True
+
+        urls = [c.args[0][0] for c in mock_ydl.download.call_args_list]
+        assert urls == [
+            "https://www.youtube.com/watch?v=vid1",
+            "https://www.youtube.com/watch?v=vid2",
+        ]
+        assert tags.call_count == 2
+        # Tagged path uses the POST-EXTRACTION extension (.flac) and Lidarr names.
+        first_path = tags.call_args_list[0].args[0]
+        assert first_path == tmp_path / "Lidarr Artist" / "Lidarr Album" / "01 - One.flac"
+        kw = tags.call_args_list[0].kwargs
+        assert kw["title"] == "One"
+        assert kw["album"] == "Lidarr Album"
+        assert kw["albumartist"] == "Lidarr Artist"
+        assert kw["tracknumber"] == 1
+        assert kw["date"] == "2001"
+
+    def test_outtmpl_uses_ext_placeholder(self, provider, mocker, tmp_path):
+        """outtmpl ends in .%(ext)s, never a baked extension."""
+        provider._opts.download_dir = str(tmp_path)
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, _ = _mock_ydl(mocker)
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        provider.download(_dl_match(), log=None)
+
+        opts = cls.call_args.args[0]
+        assert opts["outtmpl"].endswith("01 - One.%(ext)s")
+        assert ".flac" not in opts["outtmpl"]
+
+    def test_unavailable_tracks_skipped_still_true(self, provider, mocker, tmp_path):
+        """Missing videoId / isAvailable=False are skipped, not errors; still True."""
+        provider._opts.download_dir = str(tmp_path)
+        tracks = [
+            _track(video_id="v1", title="One"),
+            _track(video_id=None, title="Gone"),
+            _track(video_id="v3", title="Region", available=False),
+        ]
+        _mock_ytmusic(mocker, _album_data(tracks=tracks))
+        cls, mock_ydl = _mock_ydl(mocker)
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        assert provider.download(_dl_match(), log=None) is True
+        assert mock_ydl.download.call_count == 1
+
+    def test_all_unavailable_returns_false(self, provider, mocker, tmp_path):
+        """Zero produced tracks (all unavailable) returns False."""
+        provider._opts.download_dir = str(tmp_path)
+        tracks = [_track(video_id=None, title="X", available=False)]
+        _mock_ytmusic(mocker, _album_data(tracks=tracks))
+        cls, mock_ydl = _mock_ydl(mocker)
+
+        assert provider.download(_dl_match(), log=None) is False
+        mock_ydl.download.assert_not_called()
+
+    def test_per_track_error_returns_false(self, provider, mocker, tmp_path):
+        """A real per-track download error returns False."""
+        provider._opts.download_dir = str(tmp_path)
+        _mock_ytmusic(mocker, _album_data())
+        cls, mock_ydl = _mock_ydl(mocker)
+        mock_ydl.download.side_effect = yt_dlp.utils.DownloadError("nope")
+        log_fn = MagicMock()
+
+        assert provider.download(_dl_match(), log=log_fn) is False
+
+    def test_skip_existing_uses_post_extraction_path(self, provider, mocker, tmp_path):
+        """An existing post-extraction .flac file is skipped, not re-downloaded."""
+        provider._opts.download_dir = str(tmp_path)
+        album_path = tmp_path / "Lidarr Artist" / "Lidarr Album"
+        album_path.mkdir(parents=True)
+        (album_path / "01 - One.flac").write_bytes(b"x")
+        _mock_ytmusic(mocker, _album_data())
+        cls, mock_ydl = _mock_ydl(mocker)
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        assert provider.download(_dl_match(), log=None) is True
+        urls = [c.args[0][0] for c in mock_ydl.download.call_args_list]
+        assert urls == ["https://www.youtube.com/watch?v=vid2"]
+
+    def test_with_log_installs_hooks(self, provider, mocker, tmp_path):
+        """A log callback installs progress_hooks and logger on the opts."""
+        provider._opts.download_dir = str(tmp_path)
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, _ = _mock_ydl(mocker)
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        provider.download(_dl_match(), log=MagicMock())
+
+        opts = cls.call_args.args[0]
+        assert "progress_hooks" in opts
+        assert "logger" in opts
+
+    def test_without_log_no_hooks(self, provider, mocker, tmp_path):
+        """No log callback leaves progress_hooks/logger off the opts."""
+        provider._opts.download_dir = str(tmp_path)
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, _ = _mock_ydl(mocker)
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        provider.download(_dl_match(), log=None)
+
+        opts = cls.call_args.args[0]
+        assert "progress_hooks" not in opts
+        assert "logger" not in opts
+
+    def test_cookiefile_present_when_file_exists(self, provider, mocker, tmp_path):
+        """A configured, existing cookies file adds cookiefile to the opts."""
+        cookies = tmp_path / "cookies.txt"
+        cookies.write_text("# Netscape HTTP Cookie File\n")
+        provider._opts.download_dir = str(tmp_path)
+        provider._opts.cookies_file = str(cookies)
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, _ = _mock_ydl(mocker)
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        provider.download(_dl_match(), log=None)
+
+        opts = cls.call_args.args[0]
+        assert opts["cookiefile"] == str(cookies)
+
+    def test_no_cookiefile_when_unset(self, provider, mocker, tmp_path):
+        """With no cookies configured, the opts carry no cookiefile key."""
+        provider._opts.download_dir = str(tmp_path)
+        provider._opts.cookies_file = None
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, _ = _mock_ydl(mocker)
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        provider.download(_dl_match(), log=None)
+
+        opts = cls.call_args.args[0]
+        assert "cookiefile" not in opts
+
+
+class TestWriteTrackTags:
+    """Round-trip the tag writer on a real audio container."""
+
+    def test_roundtrip_all_six_tags(self, tmp_path):
+        """All six tags read back from a real FLAC produced by ffmpeg."""
+        if shutil.which("ffmpeg") is None:
+            pytest.skip("ffmpeg required for tag round-trip test")
+        flac = tmp_path / "01 - One.flac"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=44100:cl=mono",
+                "-t",
+                "0.1",
+                "-c:a",
+                "flac",
+                "-y",
+                str(flac),
+            ],
+            check=True,
+            capture_output=True,
         )
 
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = None
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        result = provider.download(match, quality=None, log=None)
-
-        assert result is False
-
-    def test_download_without_log_no_hooks(self, provider, mocker):
-        """Test that download without log callback does not install hooks."""
-        match = Match(
-            source="youtube_music",
-            url="https://music.youtube.com/playlist?list=PL123",
-            title="Album",
-            artists="Artist",
-            cover_url=None,
-            year=2023,
-            track_count=10,
+        _write_track_tags(
+            flac,
+            title="One",
+            artist="Daft Punk",
+            album="Discovery",
+            albumartist="Daft Punk",
+            tracknumber=1,
+            date="2001",
         )
 
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {"entries": []}
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mock_ydl_class = mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        result = provider.download(match, quality=None, log=None)
-
-        assert result is True
-        # Verify that progress_hooks and logger are NOT set when log is None
-        call_args = mock_ydl_class.call_args[0]
-        assert len(call_args) > 0
-        ydl_opts = call_args[0]
-        assert "progress_hooks" not in ydl_opts
-        assert "logger" not in ydl_opts
-
-    def test_download_calls_repair_tags(self, provider, tmp_path, mocker):
-        """Test that download calls repair_tags_from_info with correct arguments."""
-        match = Match(
-            source="youtube_music",
-            url="https://music.youtube.com/playlist?list=PL123",
-            title="Album",
-            artists="Artist",
-            cover_url=None,
-            year=2023,
-            track_count=10,
-        )
-
-        album_dir = tmp_path / "Artist" / "Album"
-        album_dir.mkdir(parents=True)
-
-        info = {
-            "title": "Album",
-            "uploader": "Artist",
-            "requested_downloads": [{"filepath": str(album_dir / "01.flac")}],
-            "entries": [{"title": "Track 1", "artist": "Artist"}],
-        }
-
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = info
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        mock_repair = mocker.patch("albfetcharr.sources.youtube_music.repair_tags_from_info")
-
-        result = provider.download(match, quality=None, log=None)
-
-        assert result is True
-        mock_repair.assert_called_once()
-        call_args = mock_repair.call_args
-        assert call_args[0][0] == album_dir
-        assert call_args[0][1] == info
-
-    def test_download_handles_missing_filepath(self, provider, mocker):
-        """Test download handles missing filepath gracefully."""
-        match = Match(
-            source="youtube_music",
-            url="https://music.youtube.com/playlist?list=PL123",
-            title="Album",
-            artists="Artist",
-            cover_url=None,
-            year=2023,
-            track_count=10,
-        )
-
-        info = {"title": "Album", "uploader": "Artist", "entries": []}
-
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = info
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        mock_repair = mocker.patch("albfetcharr.sources.youtube_music.repair_tags_from_info")
-
-        result = provider.download(match, quality=None, log=None)
-
-        assert result is True
-        mock_repair.assert_not_called()
+        tags = MutagenFile(str(flac), easy=True)
+        assert tags["title"] == ["One"]
+        assert tags["artist"] == ["Daft Punk"]
+        assert tags["album"] == ["Discovery"]
+        assert tags["albumartist"] == ["Daft Punk"]
+        assert tags["tracknumber"] == ["1"]
+        assert tags["date"] == ["2001"]
 
 
 class TestProvider:

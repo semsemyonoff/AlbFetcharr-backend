@@ -5,22 +5,26 @@ fragile YouTube-Music search extractor. Downloading still uses yt-dlp.
 """
 
 import logging
+import re
+from pathlib import Path
 from typing import ClassVar
 
 import yt_dlp
+from mutagen import File as MutagenFile
 from ytmusicapi import YTMusic
 
 from albfetcharr.config import YtDlpOptions
 from albfetcharr.sources.base import LogFn, Match, SourceProvider
 from albfetcharr.sources.ytdlp_base import (
     LogAdapter,
-    album_dir_from_info,
-    build_ydl_opts,
+    apply_cookies,
     make_progress_hook,
-    repair_tags_from_info,
 )
 
 logger = logging.getLogger(__name__)
+
+# Characters that are illegal or hostile in filesystem path segments.
+_FS_HOSTILE = re.compile(r'[/\\<>:"|?*\x00-\x1f]')
 
 
 def _largest_thumbnail(thumbnails: list[dict] | None) -> str | None:
@@ -29,6 +33,83 @@ def _largest_thumbnail(thumbnails: list[dict] | None) -> str | None:
         return None
     best = max(thumbnails, key=lambda t: t.get("width") or 0)
     return best.get("url")
+
+
+def _sanitize_name(name: str) -> str:
+    """Sanitize a string for use as a single filesystem path segment.
+
+    Strips filesystem-hostile characters (``/ \\ < > : " | ? *`` and control
+    chars) and collapses runs of whitespace. Distinct from
+    ``locator.normalize_name`` (which is for *matching*, not output paths);
+    this preserves case and most punctuation so on-disk names stay readable.
+    """
+    cleaned = _FS_HOSTILE.sub("", name or "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or "Unknown"
+
+
+def _browse_id_from_url(url: str | None) -> str | None:
+    """Parse the YouTube Music ``browseId`` from a Match URL.
+
+    Match URLs are ``https://music.youtube.com/browse/<browseId>``; returns the
+    segment after ``/browse/`` (stripped of any trailing path/query), or None
+    when the URL is empty or has no ``/browse/`` marker.
+    """
+    if not url:
+        return None
+    marker = "/browse/"
+    idx = url.find(marker)
+    if idx == -1:
+        return None
+    browse_id = url[idx + len(marker) :].split("/")[0].split("?")[0].strip()
+    return browse_id or None
+
+
+def _write_track_tags(
+    path: Path,
+    *,
+    title: str,
+    artist: str,
+    album: str,
+    albumartist: str,
+    tracknumber: int,
+    date: str | int | None,
+    log: LogFn | None = None,
+) -> None:
+    """Write clean tags onto a downloaded track with mutagen (easy mode).
+
+    Overrides whatever junk metadata the source video carried. The final file
+    path (``.<audio_format>``) must be resolved by the caller — never the
+    yt-dlp ``outtmpl`` string, whose extension is the download container.
+    """
+
+    def _log(msg: str) -> None:
+        if log:
+            log(msg)
+        else:
+            logger.info(msg)
+
+    try:
+        tags = MutagenFile(str(path), easy=True)
+    except Exception as e:
+        _log(f"Could not open tags for {path.name}: {e}")
+        return
+    if tags is None:
+        _log(f"Unsupported audio format for tagging: {path.name}")
+        return
+
+    tags["title"] = [title]
+    tags["artist"] = [artist]
+    tags["album"] = [album]
+    tags["albumartist"] = [albumartist]
+    tags["tracknumber"] = [str(tracknumber)]
+    if date:
+        tags["date"] = [str(date)]
+
+    try:
+        tags.save()
+    except Exception as e:
+        _log(f"Failed to save tags for {path.name}: {e}")
 
 
 class YouTubeMusicProvider(SourceProvider):
@@ -104,6 +185,32 @@ class YouTubeMusicProvider(SourceProvider):
 
         return matches
 
+    def _build_track_opts(self, outtmpl: str) -> dict:
+        """Build yt-dlp options for a single-track YouTube video download.
+
+        ``outtmpl`` must end in ``.%(ext)s`` (never a baked extension): the
+        download-container ext differs from the post-extraction one produced by
+        FFmpegExtractAudio. The optional cookiefile is applied when configured.
+        """
+        opts = self._opts
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": outtmpl,
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": opts.audio_format,
+                    "preferredquality": str(opts.audio_quality),
+                },
+                {"key": "EmbedThumbnail"},
+            ],
+            "writethumbnail": True,
+            "quiet": True,
+            "no_warnings": True,
+        }
+        apply_cookies(ydl_opts, opts)
+        return ydl_opts
+
     def download(
         self,
         match: Match,
@@ -111,39 +218,120 @@ class YouTubeMusicProvider(SourceProvider):
         quality: str | None = None,
         log: LogFn | None = None,
     ) -> bool:
-        """Download an album from YouTube Music.
+        """Download an album from YouTube Music, one track at a time.
 
-        Uses extract_info(download=True) to get the populated info_dict,
-        which is needed for the tag-repair step (Task 4.5).
+        Resolves the album track list from ``match.url``'s ``browseId`` via
+        ytmusicapi, then downloads each available track as an individual
+        ``youtube.com/watch?v=<id>`` video (far more robust than resolving the
+        YouTube-Music album playlist). Clean tags are written from the ytmusicapi
+        metadata after each track.
+
+        Folder/album identity uses the **requested Lidarr names** carried on the
+        Match (``match.artists`` / ``match.title``), not the ytmusicapi album
+        metadata, so the on-disk ``<artist>/<album>/`` layout matches the exact
+        strings ``find_album_dir`` / ``check_album_status`` look albums up by.
+
+        Partial-album contract (*import what's available*): tracks ytmusicapi
+        reports as unavailable (``isAvailable=False`` or missing ``videoId``) are
+        skipped and are **not** errors. Returns True when ≥1 track was downloaded
+        or already existed and no *downloadable* track errored; an explicit
+        ``partial: N/M`` summary is always logged. Returns False on parse failure,
+        zero tracks, or a real per-track download error.
 
         Args:
-            match: The Match object from search().
-            quality: Format string (unused for YouTube Music; uses build_ydl_opts default).
-            log: Optional callback for progress lines. When None, yt-dlp writes to stdout.
+            match: The Match from search(); url carries the browseId, title/artists
+                carry the requested Lidarr album/artist names.
+            quality: Unused for YouTube Music (codec/quality come from YtDlpOptions).
+            log: Optional callback for progress lines. When None, writes to stdout.
 
         Returns:
-            True if download succeeded, False otherwise.
+            True if at least one track was produced and none errored, else False.
         """
-        ydl_opts = build_ydl_opts(self._opts, search=False)
 
-        if log is not None:
-            ydl_opts["progress_hooks"] = [make_progress_hook(log)]
-            ydl_opts["logger"] = LogAdapter(log)
+        def _log(msg: str) -> None:
+            if log:
+                log(msg)
+            else:
+                logger.info(msg)
+
+        browse_id = _browse_id_from_url(match.url)
+        if not browse_id:
+            _log(f"Could not parse browseId from URL: {match.url}")
+            return False
 
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(match.url, download=True)
-        except yt_dlp.utils.YoutubeDLError as e:
-            if log:
-                log(f"yt-dlp download failed: {e}")
+            album = YTMusic().get_album(browse_id)
+        except Exception as e:
+            _log(f"Failed to fetch album {browse_id}: {e}")
             return False
 
-        if info is None:
+        tracks = (album or {}).get("tracks") or []
+        total = len(tracks)
+        if total == 0:
+            _log(f"No tracks found for album {browse_id}")
             return False
 
-        album_dir = album_dir_from_info(info)
-        if album_dir is None:
-            return True
+        year = (album or {}).get("year")
+        artist_seg = _sanitize_name(match.artists)
+        album_seg = _sanitize_name(match.title)
+        album_path = Path(self._opts.download_dir) / artist_seg / album_seg
+        ext = self._opts.audio_format
 
-        repair_tags_from_info(album_dir, info, log=log)
-        return True
+        downloaded = existing = skipped = errors = 0
+
+        for idx, track in enumerate(tracks, start=1):
+            video_id = track.get("videoId")
+            track_title = track.get("title") or f"Track {idx}"
+            if not video_id or track.get("isAvailable") is False:
+                skipped += 1
+                _log(f"Skipping unavailable track {idx}/{total}: {track_title}")
+                continue
+
+            track_artist = (
+                ", ".join(a.get("name") for a in (track.get("artists") or []) if a.get("name"))
+                or match.artists
+            )
+
+            stem = f"{idx:02d} - {_sanitize_name(track_title)}"
+            final_path = album_path / f"{stem}.{ext}"
+            if final_path.exists():
+                existing += 1
+                _log(f"Already downloaded {idx}/{total}: {final_path.name}")
+                continue
+
+            outtmpl = str(album_path / f"{stem}.%(ext)s")
+            ydl_opts = self._build_track_opts(outtmpl)
+            if log is not None:
+                ydl_opts["progress_hooks"] = [make_progress_hook(log)]
+                ydl_opts["logger"] = LogAdapter(log)
+
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([video_url])
+            except yt_dlp.utils.YoutubeDLError as e:
+                errors += 1
+                _log(f"yt-dlp failed for track {idx}/{total} ({video_id}): {e}")
+                continue
+
+            _write_track_tags(
+                final_path,
+                title=track_title,
+                artist=track_artist,
+                album=match.title,
+                albumartist=match.artists,
+                tracknumber=idx,
+                date=year,
+                log=log,
+            )
+            downloaded += 1
+
+        produced = downloaded + existing
+        _log(
+            f"partial: {produced}/{total} (downloaded={downloaded} existing={existing} "
+            f"skipped={skipped} errors={errors})"
+        )
+
+        if errors:
+            return False
+        return produced > 0
