@@ -108,7 +108,7 @@ AlbFetcharr поддерживает несколько источников д�
 | Источник | Требования | Заметки |
 |---|---|---|
 | **Yandex Music** | `YANDEX_MUSIC_TOKEN` | Наиболее точный поиск, полная информация об альбомах и исполнителях |
-| **YouTube Music** | Включен по умолчанию | Поиск может быть менее точным, рекомендуется проверить результаты; теги `album` и `tracknumber` могут требовать ручной корректировки |
+| **YouTube Music** | Включен по умолчанию | Поиск через `ytmusicapi` (авторизация не нужна); загрузка по отдельным трекам, опционально с `cookies.txt` (см. ниже) |
 | **SoundCloud** | Включен по умолчанию | Для сетов (плейлистов), поиск может быть менее точным; теги могут быть неполными |
 
 ### Особенности источников
@@ -118,11 +118,27 @@ AlbFetcharr поддерживает несколько источников д�
 - Лучшее качество метаданных
 - Поддержка различных форматов (AAC 64/192, FLAC)
 
-**YouTube Music и SoundCloud**
-- Используют [yt-dlp](https://github.com/yt-dlp/yt-dlp) для поиска и загрузки
-- Требуют ffmpeg для конвертации аудио
+**YouTube Music**
+- Поиск выполняется через [ytmusicapi](https://github.com/sigma67/ytmusicapi) — **авторизация и cookies для поиска не требуются**
+- Загрузка идёт по отдельным трекам альбома (`youtube.com/watch?v=…`) через [yt-dlp](https://github.com/yt-dlp/yt-dlp), теги пишутся из метаданных альбома ytmusicapi (`title`, `artist`, `album`, `albumartist`, `tracknumber`, `date`)
+- Современный YouTube часто требует cookies при загрузке («Sign in to confirm you're not a bot»). Если вы столкнулись с этой ошибкой, передайте файл `cookies.txt` (см. [Cookies для YouTube](#cookies-для-youtube)). Без cookies поиск и загрузка остальных источников работают как прежде
+- Если какие-то треки недоступны в вашем регионе, они пропускаются, а альбом импортируется частично (в логе будет строка `partial: N/M`)
+
+**SoundCloud**
+- Использует [yt-dlp](https://github.com/yt-dlp/yt-dlp) для поиска и загрузки
+- Требует ffmpeg для конвертации аудио
 - Поиск может возвращать неточные результаты — **рекомендуется проверить результаты в веб-интерфейсе перед загрузкой**
 - Теги `artist`, `album`, `title`, `tracknumber` заполняются из метаданных плейлиста; если источник слабо помечен, может потребоваться ручная корректировка перед импортом в Lidarr
+
+### Cookies для YouTube
+
+Загрузка из YouTube может потребовать cookies авторизованного аккаунта (ошибка *«Sign in to confirm you're not a bot»*). Поддержка cookies **опциональна**:
+
+1. Экспортируйте cookies в формате Netscape (`cookies.txt`) из браузера, где вы авторизованы на YouTube — например, расширением [Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY) или `yt-dlp --cookies-from-browser`.
+2. Положите файл в каталог, доступный контейнеру (например, рядом с загрузками), и укажите путь **внутри контейнера** в переменной `ALBFETCHARR_YTDLP_COOKIES`.
+3. Перезапустите сервис. Файл подхватывается автоматически только если он существует.
+
+Если переменная не задана или файл отсутствует, ничего не меняется: поиск YouTube (через ytmusicapi) cookies не использует, а SoundCloud и Яндекс Музыка работают как прежде.
 
 ## Переменные окружения
 
@@ -164,6 +180,7 @@ AlbFetcharr поддерживает несколько источников д�
 | `ALBFETCHARR_UNSAFE_PATH` | `0` | Не очищать путь от недопустимых символов (`0` / `1`) |
 | `ALBFETCHARR_YTDLP_FORMAT` | `flac` | Формат аудио для yt-dlp источников: `flac`, `m4a`, `mp3` |
 | `ALBFETCHARR_YTDLP_QUALITY` | `192` | Битрейт для сжатых форматов (кбит/с), игнорируется для FLAC |
+| `ALBFETCHARR_YTDLP_COOKIES` | — | Путь (внутри контейнера) к Netscape `cookies.txt` для загрузки YouTube/SoundCloud за бот-гейтом. Опционально; если не задан или файл отсутствует — cookies не используются (см. [Cookies для YouTube](#cookies-для-youtube)) |
 | `ALBFETCHARR_ENABLE_YOUTUBE_MUSIC` | `1` | Включить YouTube Music источник (`0` / `1`) |
 | `ALBFETCHARR_ENABLE_SOUNDCLOUD` | `1` | Включить SoundCloud источник (`0` / `1`) |
 
@@ -262,6 +279,7 @@ docker compose run --rm albfetcharr download --source soundcloud "https://soundc
 
 - [yandex-music-downloader](https://github.com/llistochek/yandex-music-downloader) — загрузка треков из Яндекс Музыки
 - [yandex-music](https://github.com/MarshalX/yandex-music-api) — поиск альбомов через API Яндекс Музыки
+- [ytmusicapi](https://github.com/sigma67/ytmusicapi) — поиск альбомов в YouTube Music (без авторизации)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) — загрузка из YouTube Music и SoundCloud
 - [ffmpeg](https://ffmpeg.org/) — конвертация аудио для yt-dlp источников (включён в Docker-образ; требуется на хосте при запуске без Docker)
 - [Lidarr](https://lidarr.audio/) — управление библиотекой, wanted-список, импорт
