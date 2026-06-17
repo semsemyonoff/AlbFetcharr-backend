@@ -392,6 +392,38 @@ class TestDownload:
         # Both tracks were attempted (the error does not abort the loop).
         assert mock_ydl.download.call_count == 2
 
+    def test_post_processing_failure_after_extraction_is_kept(self, provider, mocker, tmp_path):
+        """A post-processing error (e.g. thumbnail embed) raised after the audio is
+        already on disk is non-fatal: the track is kept and tagged, album True."""
+        provider._opts.download_dir = str(tmp_path)
+        album_path = tmp_path / "Lidarr Artist" / "Lidarr Album"
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, mock_ydl = _mock_ydl(mocker)
+        tags = mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        def _download(_urls):
+            # FFmpegExtractAudio produced the file before the failing embed step.
+            album_path.mkdir(parents=True, exist_ok=True)
+            (album_path / "01 - One.flac").write_bytes(b"audio")
+            raise yt_dlp.utils.PostProcessingError("embedding thumbnail failed")
+
+        mock_ydl.download.side_effect = _download
+
+        assert provider.download(_dl_match(), log=None) is True
+        # The produced track is still tagged despite the post-processing failure.
+        assert tags.call_count == 1
+
+    def test_download_failure_before_extraction_is_error(self, provider, mocker, tmp_path):
+        """A download error that leaves no file on disk is a real error -> False."""
+        provider._opts.download_dir = str(tmp_path)
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, mock_ydl = _mock_ydl(mocker)
+        # PostProcessingError is also a YoutubeDLError; with no file on disk it
+        # must still count as a hard error (not masked by the partial path).
+        mock_ydl.download.side_effect = yt_dlp.utils.PostProcessingError("boom")
+
+        assert provider.download(_dl_match(), log=None) is False
+
     def test_non_default_codec_uses_real_container_ext(self, provider, mocker, tmp_path):
         """A codec whose container ext differs (vorbis -> .ogg) resolves the real path."""
         provider._opts.download_dir = str(tmp_path)

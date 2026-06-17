@@ -323,9 +323,15 @@ class YouTubeMusicProvider(SourceProvider):
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([video_url])
             except yt_dlp.utils.YoutubeDLError as e:
-                errors += 1
-                _log(f"yt-dlp failed for track {idx}/{total} ({video_id}): {e}")
-                continue
+                # FFmpegExtractAudio writes the final file before later post-
+                # processing (e.g. thumbnail embed). If the audio is already on
+                # disk, a post-processing failure is non-fatal — keep and tag the
+                # track rather than failing the whole album (partial contract).
+                if not final_path.exists():
+                    errors += 1
+                    _log(f"yt-dlp failed for track {idx}/{total} ({video_id}): {e}")
+                    continue
+                _log(f"Post-processing issue for track {idx}/{total} ({video_id}): {e}")
 
             _write_track_tags(
                 final_path,
