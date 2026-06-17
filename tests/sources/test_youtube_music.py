@@ -331,6 +331,62 @@ class TestDownload:
         assert kw["tracknumber"] == 1
         assert kw["date"] == "2001"
 
+    def test_empty_match_names_fall_back_to_album_metadata(self, provider, mocker, tmp_path):
+        """The CLI `download URL` path (empty Match names) uses ytmusicapi album
+        metadata for the folder and tags, never collapsing to Unknown/Unknown."""
+        provider._opts.download_dir = str(tmp_path)
+        album = _album_data(title="Discovery", tracks=[_track(video_id="v", title="One")])
+        album["artists"] = [{"name": "Daft Punk", "id": "UC1"}]
+        _mock_ytmusic(mocker, album)
+        cls, _ = _mock_ydl(mocker)
+        tags = mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        match = _dl_match(title="", artists="")
+        assert provider.download(match, log=None) is True
+
+        tagged_path = tags.call_args_list[0].args[0]
+        assert tagged_path == tmp_path / "Daft Punk" / "Discovery" / "01 - One.flac"
+        kw = tags.call_args_list[0].kwargs
+        assert kw["album"] == "Discovery"
+        assert kw["albumartist"] == "Daft Punk"
+
+    def test_empty_names_fall_back_to_track_artist(self, provider, mocker, tmp_path):
+        """With no album-level artist, the first track's artist is used so the
+        folder/tag is still a real name rather than Unknown."""
+        provider._opts.download_dir = str(tmp_path)
+        # _album_data carries no album-level "artists"; the track does.
+        album = _album_data(
+            title="Discovery",
+            tracks=[_track(video_id="v", title="One", artists=(("Stardust", "UC9"),))],
+        )
+        _mock_ytmusic(mocker, album)
+        cls, _ = _mock_ydl(mocker)
+        tags = mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        assert provider.download(_dl_match(title="", artists=""), log=None) is True
+
+        tagged_path = tags.call_args_list[0].args[0]
+        assert tagged_path == tmp_path / "Stardust" / "Discovery" / "01 - One.flac"
+        assert tags.call_args_list[0].kwargs["albumartist"] == "Stardust"
+
+    def test_match_names_win_over_album_metadata(self, provider, mocker, tmp_path):
+        """When the Match carries Lidarr names, they take precedence over the
+        ytmusicapi album metadata (web/wanted flow is unchanged)."""
+        provider._opts.download_dir = str(tmp_path)
+        album = _album_data(title="Discovery", tracks=[_track(video_id="v", title="One")])
+        album["artists"] = [{"name": "Daft Punk", "id": "UC1"}]
+        _mock_ytmusic(mocker, album)
+        cls, _ = _mock_ydl(mocker)
+        tags = mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        assert provider.download(_dl_match(), log=None) is True
+
+        tagged_path = tags.call_args_list[0].args[0]
+        assert tagged_path == tmp_path / "Lidarr Artist" / "Lidarr Album" / "01 - One.flac"
+        kw = tags.call_args_list[0].kwargs
+        assert kw["album"] == "Lidarr Album"
+        assert kw["albumartist"] == "Lidarr Artist"
+
     def test_outtmpl_uses_ext_placeholder(self, provider, mocker, tmp_path):
         """outtmpl ends in .%(ext)s, never a baked extension."""
         provider._opts.download_dir = str(tmp_path)

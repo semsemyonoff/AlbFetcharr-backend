@@ -45,6 +45,29 @@ def _largest_thumbnail(thumbnails: list[dict] | None) -> str | None:
     return best.get("url")
 
 
+def _join_artists(items: list[dict] | None) -> str:
+    """Join ytmusicapi artist entries into a comma-separated display string."""
+    return ", ".join(a.get("name") for a in (items or []) if a.get("name"))
+
+
+def _album_artist(album: dict | None, tracks: list[dict]) -> str:
+    """Best-effort album artist from ytmusicapi metadata.
+
+    Prefers the album-level ``artists``; falls back to the first track that
+    carries an artist. Used only when the Match has no requested (Lidarr) artist
+    — i.e. the CLI ``download URL`` path — so the on-disk folder and tags reflect
+    the real album rather than collapsing to ``Unknown``.
+    """
+    names = _join_artists((album or {}).get("artists"))
+    if names:
+        return names
+    for track in tracks:
+        names = _join_artists(track.get("artists"))
+        if names:
+            return names
+    return ""
+
+
 def _sanitize_name(name: str) -> str:
     """Sanitize a string for use as a single filesystem path segment.
 
@@ -180,8 +203,7 @@ class YouTubeMusicProvider(SourceProvider):
             browse_id = result.get("browseId")
             if not browse_id:
                 continue
-            names = [a.get("name") for a in (result.get("artists") or []) if a.get("name")]
-            artists = ", ".join(names) if names else artist
+            artists = _join_artists(result.get("artists")) or artist
             year = result.get("year")
             track_count = result.get("trackCount")
             matches.append(
@@ -242,7 +264,10 @@ class YouTubeMusicProvider(SourceProvider):
         Folder/album identity uses the **requested Lidarr names** carried on the
         Match (``match.artists`` / ``match.title``), not the ytmusicapi album
         metadata, so the on-disk ``<artist>/<album>/`` layout matches the exact
-        strings ``find_album_dir`` / ``check_album_status`` look albums up by.
+        strings ``find_album_dir`` / ``check_album_status`` look albums up by. When
+        the Match carries no names (the CLI ``download URL`` path, which has no
+        Lidarr context) the provider falls back to the ytmusicapi album
+        title/artist so tracks never collapse into ``Unknown/Unknown``.
 
         Partial-album contract (*import what's available*): tracks ytmusicapi
         reports as unavailable (``isAvailable=False`` or missing ``videoId``) are
@@ -269,7 +294,11 @@ class YouTubeMusicProvider(SourceProvider):
 
         browse_id = _browse_id_from_url(match.url)
         if not browse_id:
-            _log(f"Could not parse browseId from URL: {match.url}")
+            _log(
+                f"Unsupported YouTube URL for download: {match.url!r}. Direct download "
+                "expects a YouTube Music album URL (music.youtube.com/browse/<id>); "
+                "watch/playlist URLs are not supported — use the wanted/search flow."
+            )
             return False
 
         try:
@@ -285,8 +314,17 @@ class YouTubeMusicProvider(SourceProvider):
             return False
 
         year = (album or {}).get("year")
-        artist_seg = _sanitize_name(match.artists)
-        album_seg = _sanitize_name(match.title)
+
+        # Folder/album identity normally uses the requested Lidarr names carried on
+        # the Match (web/wanted flow). The CLI `download URL` path has no Lidarr
+        # names (empty title/artists), so fall back to the ytmusicapi album
+        # metadata there — otherwise tracks would land under "Unknown/Unknown" with
+        # empty album tags. When the Match carries names they always win.
+        album_title = match.title or (album or {}).get("title") or ""
+        album_artist = match.artists or _album_artist(album, tracks)
+
+        artist_seg = _sanitize_name(album_artist)
+        album_seg = _sanitize_name(album_title)
         album_path = Path(self._opts.download_dir) / artist_seg / album_seg
         ext = _audio_ext(self._opts.audio_format)
 
@@ -300,10 +338,7 @@ class YouTubeMusicProvider(SourceProvider):
                 _log(f"Skipping unavailable track {idx}/{total}: {track_title}")
                 continue
 
-            track_artist = (
-                ", ".join(a.get("name") for a in (track.get("artists") or []) if a.get("name"))
-                or match.artists
-            )
+            track_artist = _join_artists(track.get("artists")) or album_artist
 
             stem = f"{idx:02d} - {_sanitize_name(track_title)}"
             final_path = album_path / f"{stem}.{ext}"
@@ -337,8 +372,8 @@ class YouTubeMusicProvider(SourceProvider):
                 final_path,
                 title=track_title,
                 artist=track_artist,
-                album=match.title,
-                albumartist=match.artists,
+                album=album_title,
+                albumartist=album_artist,
                 tracknumber=idx,
                 date=year,
                 log=log,
