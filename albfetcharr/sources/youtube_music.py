@@ -26,6 +26,16 @@ logger = logging.getLogger(__name__)
 # Characters that are illegal or hostile in filesystem path segments.
 _FS_HOSTILE = re.compile(r'[/\\<>:"|?*\x00-\x1f]')
 
+# yt-dlp's FFmpegExtractAudio writes a container whose extension differs from the
+# codec name for a few codecs; map to the real on-disk extension so skip-existing
+# and tagging resolve the actual produced file rather than a non-existent path.
+_CODEC_EXT = {"aac": "m4a", "alac": "m4a", "vorbis": "ogg"}
+
+
+def _audio_ext(audio_format: str) -> str:
+    """Resolve the on-disk file extension produced for a yt-dlp audio codec."""
+    return _CODEC_EXT.get(audio_format, audio_format)
+
 
 def _largest_thumbnail(thumbnails: list[dict] | None) -> str | None:
     """Return the URL of the highest-resolution thumbnail, or None."""
@@ -45,6 +55,9 @@ def _sanitize_name(name: str) -> str:
     """
     cleaned = _FS_HOSTILE.sub("", name or "")
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # Strip leading/trailing dots so segments like "." / ".." can't escape the
+    # download root (path traversal) or create hidden directories.
+    cleaned = cleaned.strip(".").strip()
     return cleaned or "Unknown"
 
 
@@ -275,7 +288,7 @@ class YouTubeMusicProvider(SourceProvider):
         artist_seg = _sanitize_name(match.artists)
         album_seg = _sanitize_name(match.title)
         album_path = Path(self._opts.download_dir) / artist_seg / album_seg
-        ext = self._opts.audio_format
+        ext = _audio_ext(self._opts.audio_format)
 
         downloaded = existing = skipped = errors = 0
 

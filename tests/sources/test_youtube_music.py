@@ -250,6 +250,18 @@ class TestSanitizeName:
         assert _sanitize_name("///") == "Unknown"
         assert _sanitize_name("") == "Unknown"
 
+    def test_dot_segments_cannot_traverse(self):
+        """Pure-dot segments collapse to Unknown (no path traversal)."""
+        assert _sanitize_name("..") == "Unknown"
+        assert _sanitize_name(".") == "Unknown"
+        assert _sanitize_name("....") == "Unknown"
+
+    def test_strips_leading_trailing_dots(self):
+        """Leading/trailing dots are stripped; internal dots are preserved."""
+        assert _sanitize_name("..hidden") == "hidden"
+        assert _sanitize_name("name.") == "name"
+        assert _sanitize_name("Mr. Big") == "Mr. Big"
+
 
 class TestBrowseIdFromUrl:
     """Test the browseId URL parser."""
@@ -366,6 +378,31 @@ class TestDownload:
         log_fn = MagicMock()
 
         assert provider.download(_dl_match(), log=log_fn) is False
+
+    def test_one_success_one_error_returns_false(self, provider, mocker, tmp_path):
+        """A single per-track error forces False even when another track succeeded."""
+        provider._opts.download_dir = str(tmp_path)
+        _mock_ytmusic(mocker, _album_data())  # two tracks
+        cls, mock_ydl = _mock_ydl(mocker)
+        # First track downloads cleanly; the second raises.
+        mock_ydl.download.side_effect = [None, yt_dlp.utils.DownloadError("nope")]
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        assert provider.download(_dl_match(), log=None) is False
+        # Both tracks were attempted (the error does not abort the loop).
+        assert mock_ydl.download.call_count == 2
+
+    def test_non_default_codec_uses_real_container_ext(self, provider, mocker, tmp_path):
+        """A codec whose container ext differs (vorbis -> .ogg) resolves the real path."""
+        provider._opts.download_dir = str(tmp_path)
+        provider._opts.audio_format = "vorbis"
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, _ = _mock_ydl(mocker)
+        tags = mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        assert provider.download(_dl_match(), log=None) is True
+        tagged_path = tags.call_args_list[0].args[0]
+        assert tagged_path == tmp_path / "Lidarr Artist" / "Lidarr Album" / "01 - One.ogg"
 
     def test_skip_existing_uses_post_extraction_path(self, provider, mocker, tmp_path):
         """An existing post-extraction .flac file is skipped, not re-downloaded."""

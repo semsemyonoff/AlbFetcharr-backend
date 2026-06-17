@@ -3,7 +3,7 @@
 import os
 from unittest.mock import patch
 
-from albfetcharr.config import UIDefaults, load_ui_defaults
+from albfetcharr.config import UIDefaults, load_ui_defaults, load_ytdlp_options
 
 
 class TestLoadUIDefaults:
@@ -66,3 +66,31 @@ class TestLoadUIDefaults:
         assert isinstance(result, UIDefaults)
         assert hasattr(result, "language")
         assert hasattr(result, "theme")
+
+
+class TestLoadYtDlpOptions:
+    """Tests for load_ytdlp_options() — focused on the cookies_file env wiring."""
+
+    def test_cookies_file_set_from_env(self):
+        """ALBFETCHARR_YTDLP_COOKIES is read into cookies_file."""
+        with patch.dict(
+            os.environ,
+            {"ALBFETCHARR_YTDLP_COOKIES": "/hub/cookies.txt"},
+            clear=False,
+        ):
+            assert load_ytdlp_options().cookies_file == "/hub/cookies.txt"
+
+    def test_cookies_file_empty_env_coalesces_to_none(self):
+        """An empty-string env var becomes None (no cookiefile is later added)."""
+        with patch.dict(
+            os.environ,
+            {"ALBFETCHARR_YTDLP_COOKIES": ""},
+            clear=False,
+        ):
+            assert load_ytdlp_options().cookies_file is None
+
+    def test_cookies_file_absent_is_none(self):
+        """An unset env var leaves cookies_file None."""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ALBFETCHARR_YTDLP_COOKIES", None)
+            assert load_ytdlp_options().cookies_file is None
