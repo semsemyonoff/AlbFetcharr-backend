@@ -101,10 +101,13 @@ def test_openapi_has_component_schemas(client):
 
 def test_wanted_unreachable_lidarr_returns_502(client):
     """/api/wanted with unreachable Lidarr returns 502 {error} unchanged."""
-    with patch(
-        "albfetcharr.web.routes.get_wanted_albums",
-        side_effect=ConnectionError("Lidarr unreachable"),
-    ), patch.dict("os.environ", {"LIDARR_URL": "http://lidarr.test", "LIDARR_API_KEY": "k"}):
+    with (
+        patch(
+            "albfetcharr.web.routes.get_wanted_albums",
+            side_effect=ConnectionError("Lidarr unreachable"),
+        ),
+        patch.dict("os.environ", {"LIDARR_URL": "http://lidarr.test", "LIDARR_API_KEY": "k"}),
+    ):
         resp = client.get("/api/wanted")
     assert resp.status_code == 502
     data = resp.get_json()

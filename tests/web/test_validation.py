@@ -95,9 +95,7 @@ def test_search_album_id_string_coerced_to_int(client):
     """Pydantic v2 coerces a numeric string album_id to int; response echoes int."""
     resp = client.post(
         "/api/search",
-        data=json.dumps(
-            {"albums": [{"artist": "Artist", "title": "Album", "album_id": "5"}]}
-        ),
+        data=json.dumps({"albums": [{"artist": "Artist", "title": "Album", "album_id": "5"}]}),
         content_type="application/json",
     )
     # Accepted: pydantic v2 coerces "5" → int 5 in lax mode
