@@ -1,7 +1,8 @@
-"""Tests for spectree request validation (422 behavior) on /api/search."""
+"""Tests for spectree request validation (422 behavior) on /api/search and /api/download."""
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from flask import Flask
@@ -152,3 +153,82 @@ def test_search_no_providers_returns_503_empty_list():
     )
     assert resp.status_code == 503
     assert resp.get_json() == []
+
+
+# --- /api/download malformed-input tests ---
+
+
+def test_download_items_not_a_list(client):
+    """Sending items as a non-list → 422 (schema validation)."""
+    resp = client.post(
+        "/api/download",
+        data=json.dumps({"items": "not-a-list"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 422
+
+
+def test_download_valid_items_accepted(client):
+    """Valid items list with a known source → 202."""
+    from albfetcharr.web.routes import download_lock
+
+    payload = {
+        "items": [
+            {
+                "source": "fake",
+                "artist": "Artist",
+                "title": "Album",
+                "match_url": "https://example.com/album",
+                "album_id": 1,
+            }
+        ]
+    }
+    with patch.dict(
+        "os.environ",
+        {
+            "LIDARR_URL": "http://lidarr.test",
+            "LIDARR_API_KEY": "test_key",
+            "DOWNLOAD_DIR": "/downloads",
+        },
+    ):
+        resp = client.post(
+            "/api/download",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+    assert resp.status_code == 202
+    assert resp.get_json()["status"] == "started"
+    # Wait for the background thread to release the lock before the next test.
+    acquired = download_lock.acquire(timeout=5.0)
+    if acquired:
+        download_lock.release()
+
+
+def test_download_quality_string_accepted(client):
+    """quality as a string ('2') is accepted via int|str|None union and returns 202."""
+    payload = {
+        "items": [
+            {
+                "source": "fake",
+                "artist": "Artist",
+                "title": "Album",
+                "match_url": "https://example.com/album",
+                "album_id": 1,
+                "quality": "2",
+            }
+        ]
+    }
+    with patch.dict(
+        "os.environ",
+        {
+            "LIDARR_URL": "http://lidarr.test",
+            "LIDARR_API_KEY": "test_key",
+            "DOWNLOAD_DIR": "/downloads",
+        },
+    ):
+        resp = client.post(
+            "/api/download",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+    assert resp.status_code == 202

@@ -380,7 +380,7 @@ def test_api_download_started(client):
 
 @pytest.mark.usefixtures("_clean_registry")
 def test_api_download_missing_source(client):
-    """Test /api/download returns 400 when source is missing."""
+    """Test /api/download returns 422 (schema validation) when source is missing."""
 
     payload = {
         "items": [
@@ -400,10 +400,7 @@ def test_api_download_missing_source(client):
         data=json.dumps(payload),
         content_type="application/json",
     )
-    assert response.status_code == 400
-    data = response.get_json()
-    assert "error" in data
-    assert "source" in data["error"].lower()
+    assert response.status_code == 422
 
 
 @pytest.mark.usefixtures("_clean_registry")

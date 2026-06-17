@@ -312,15 +312,19 @@ def register_routes(app: Flask):
         return jsonify({"claimed": True}), 200
 
     @app.route("/api/download", methods=["POST"])
+    @api.validate(
+        json=schemas.DownloadRequest,
+        resp=SpecResponse(
+            HTTP_202=schemas.DownloadStartedResponse,
+            HTTP_400=schemas.ErrorResponse,
+            HTTP_409=schemas.ErrorResponse,
+        ),
+        tags=["download"],
+    )
     def api_download():
-        data = request.json or {}
-        items = data.get("items", [])
-        if not isinstance(items, list):
-            return jsonify({"error": "'items' must be a list"}), 400
+        items = request.context.json.model_dump()["items"]
 
         for item in items:
-            if "source" not in item:
-                return jsonify({"error": "Each item must have a 'source' field"}), 400
             try:
                 get_provider(item["source"])
             except KeyError:

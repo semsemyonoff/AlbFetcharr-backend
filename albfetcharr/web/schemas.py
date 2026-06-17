@@ -95,3 +95,26 @@ class SearchResultItem(BaseModel):
 
 class SearchResponse(RootModel[list[SearchResultItem]]):
     pass
+
+
+class DownloadItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    source: str
+    artist: str | None = None
+    title: str | None = None
+    match_url: str | None = None
+    album_id: int = 0
+    quality: int | str | None = None
+
+
+class DownloadRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[DownloadItem]
+
+
+class DownloadStartedResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    status: str
