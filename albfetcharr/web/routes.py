@@ -346,8 +346,6 @@ def register_routes(app: Flask):
                     title = item.get("title", "")
                     source = item.get("source", "")
                     match_url = item.get("match_url", "")
-                    match_title = item.get("match_title", "")
-                    match_artists = item.get("match_artists", "")
                     album_id = item.get("album_id", 0)
                     quality = item.get("quality")
 
@@ -381,11 +379,21 @@ def register_routes(app: Flask):
                         f"Downloading from {provider.name}",
                     )
 
+                    # The on-disk album layout must key off the Lidarr album/artist
+                    # names (item["title"]/item["artist"]), NOT the source's own
+                    # metadata (match_title/match_artists): find_album_dir /
+                    # check_album_status / post_import_cleanup all look albums up by
+                    # the Lidarr names. Providers that write per-track files from the
+                    # Match (YouTube Music) therefore receive the Lidarr names here,
+                    # while url=match_url still carries the source identifier
+                    # (e.g. the YouTube Music browseId) used to resolve the download.
+                    # Yandex / SoundCloud ignore title/artists (they fetch by url only),
+                    # so this is a no-op for them.
                     match = Match(
                         source=source,
                         url=match_url,
-                        title=match_title,
-                        artists=match_artists,
+                        title=title,
+                        artists=artist,
                         cover_url=None,
                         year=None,
                         track_count=None,

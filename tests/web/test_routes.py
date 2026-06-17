@@ -421,6 +421,86 @@ def test_api_download_already_running(client):
 
 
 @pytest.mark.usefixtures("_clean_registry")
+def test_api_download_passes_lidarr_names_to_provider():
+    """The Match handed to provider.download must carry the Lidarr album/artist names
+    (item title/artist), not the source's own match metadata, so the on-disk layout
+    keys off the names find_album_dir/check_album_status look albums up by. The source
+    identifier still travels via url=match_url.
+    """
+    from albfetcharr.web.routes import _stream_claim_lock, _stream_claim_state
+
+    captured: list[Match] = []
+
+    class CapturingProvider(SourceProvider):
+        id = "youtube_music"
+        name = "Capturing Provider"
+
+        def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
+            return []
+
+        def download(self, match: Match, *, quality: str | None = None, log=None) -> bool:
+            captured.append(match)
+            if log:
+                log("captured")
+            return True
+
+    clear_registry()
+    register(CapturingProvider())
+    app = make_test_app()
+    test_client = app.test_client()
+
+    test_client.post("/api/download/stream/claim")
+
+    payload = {
+        "items": [
+            {
+                # Lidarr names (the on-disk identity we must use)
+                "artist": "Lidarr Artist",
+                "title": "Lidarr Album",
+                "album_id": 1,
+                "source": "youtube_music",
+                # source identifier travels via match_url
+                "match_url": "https://music.youtube.com/browse/MPREb_abc123",
+                # source metadata deliberately DIFFERENT from the Lidarr names
+                "match_title": "Various Artists - Album (Remastered)",
+                "match_artists": "Various Artists",
+                "quality": None,
+            }
+        ]
+    }
+
+    with patch.dict(
+        "os.environ",
+        {
+            "LIDARR_URL": "http://lidarr.test",
+            "LIDARR_API_KEY": "test_key",
+            "DOWNLOAD_DIR": "/downloads",
+        },
+    ):
+        response = test_client.post(
+            "/api/download",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        assert response.status_code == 202
+        # Reading the SSE stream blocks until the background download completes.
+        test_client.get("/api/download/stream").get_data(as_text=True)
+
+    with _stream_claim_lock:
+        _stream_claim_state["claimed"] = False
+        _stream_claim_state["claimed_at"] = None
+        _stream_claim_state["last_seen"] = None
+
+    assert len(captured) == 1
+    match = captured[0]
+    # Lidarr names, NOT the source's match_title/match_artists.
+    assert match.title == "Lidarr Album"
+    assert match.artists == "Lidarr Artist"
+    # url still carries the source identifier used to resolve the download.
+    assert match.url == "https://music.youtube.com/browse/MPREb_abc123"
+
+
+@pytest.mark.usefixtures("_clean_registry")
 def test_api_download_stream(client):
     """Test /api/download/stream endpoint."""
     response = client.get("/api/download/stream")
