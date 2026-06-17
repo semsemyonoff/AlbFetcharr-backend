@@ -356,6 +356,106 @@ class TestDownload:
         mock_repair.assert_not_called()
 
 
+class TestCookies:
+    """Test that the optional cookiefile is honored transparently.
+
+    SoundCloud builds its yt-dlp opts via the shared build_ydl_opts(), which calls
+    apply_cookies() on both the search and download branches. These tests assert
+    the no-cookies default is byte-for-byte unchanged and that a cookiefile is
+    added only when a configured file actually exists on disk.
+    """
+
+    def _capture_ydl_opts(self, mocker):
+        """Patch yt_dlp.YoutubeDL and return the mock class to inspect ydl_opts."""
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {"entries": []}
+        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_ydl.__exit__ = MagicMock(return_value=False)
+        return mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+
+    def test_search_no_cookies_omits_cookiefile(self, provider, mocker):
+        """No cookies configured: search opts carry no cookiefile key."""
+        mock_ydl_class = self._capture_ydl_opts(mocker)
+
+        provider.search("Artist", "Album", limit=5)
+
+        ydl_opts = mock_ydl_class.call_args[0][0]
+        assert "cookiefile" not in ydl_opts
+
+    def test_download_no_cookies_omits_cookiefile(self, provider, mocker):
+        """No cookies configured: download opts carry no cookiefile key."""
+        match = Match(
+            source="soundcloud",
+            url="https://soundcloud.com/artist/sets/album",
+            title="Album",
+            artists="Artist",
+            cover_url=None,
+            year=2023,
+            track_count=10,
+        )
+        mock_ydl_class = self._capture_ydl_opts(mocker)
+
+        provider.download(match, quality=None, log=None)
+
+        ydl_opts = mock_ydl_class.call_args[0][0]
+        assert "cookiefile" not in ydl_opts
+
+    def test_download_cookies_set_but_missing_omits_cookiefile(self, ytdlp_options, mocker):
+        """Cookies path configured but the file does not exist: no cookiefile added."""
+        ytdlp_options.cookies_file = "/nonexistent/cookies.txt"
+        provider = SoundCloudProvider(ytdlp_options)
+        match = Match(
+            source="soundcloud",
+            url="https://soundcloud.com/artist/sets/album",
+            title="Album",
+            artists="Artist",
+            cover_url=None,
+            year=2023,
+            track_count=10,
+        )
+        mock_ydl_class = self._capture_ydl_opts(mocker)
+
+        provider.download(match, quality=None, log=None)
+
+        ydl_opts = mock_ydl_class.call_args[0][0]
+        assert "cookiefile" not in ydl_opts
+
+    def test_download_cookies_file_exists_adds_cookiefile(self, ytdlp_options, tmp_path, mocker):
+        """Configured cookies file that exists is added as cookiefile to download opts."""
+        cookies = tmp_path / "cookies.txt"
+        cookies.write_text("# Netscape HTTP Cookie File\n")
+        ytdlp_options.cookies_file = str(cookies)
+        provider = SoundCloudProvider(ytdlp_options)
+        match = Match(
+            source="soundcloud",
+            url="https://soundcloud.com/artist/sets/album",
+            title="Album",
+            artists="Artist",
+            cover_url=None,
+            year=2023,
+            track_count=10,
+        )
+        mock_ydl_class = self._capture_ydl_opts(mocker)
+
+        provider.download(match, quality=None, log=None)
+
+        ydl_opts = mock_ydl_class.call_args[0][0]
+        assert ydl_opts["cookiefile"] == str(cookies)
+
+    def test_search_cookies_file_exists_adds_cookiefile(self, ytdlp_options, tmp_path, mocker):
+        """Configured cookies file that exists is added as cookiefile to search opts."""
+        cookies = tmp_path / "cookies.txt"
+        cookies.write_text("# Netscape HTTP Cookie File\n")
+        ytdlp_options.cookies_file = str(cookies)
+        provider = SoundCloudProvider(ytdlp_options)
+        mock_ydl_class = self._capture_ydl_opts(mocker)
+
+        provider.search("Artist", "Album", limit=5)
+
+        ydl_opts = mock_ydl_class.call_args[0][0]
+        assert ydl_opts["cookiefile"] == str(cookies)
+
+
 class TestProvider:
     """Test provider identity."""
 
