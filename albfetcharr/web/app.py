@@ -9,6 +9,7 @@ from albfetcharr.lidarr.client import get_root_folders
 from albfetcharr.lidarr.library_map import validate_library_map
 from albfetcharr.sources import bootstrap_default_providers
 from albfetcharr.web.routes import register_routes
+from albfetcharr.web.spec import api
 
 logger = logging.getLogger("albfetcharr")
 
@@ -18,6 +19,7 @@ def create_app() -> Flask:
     app = Flask(__name__, static_folder="static")
 
     register_routes(app)
+    api.register(app)
 
     bootstrap_default_providers()
 

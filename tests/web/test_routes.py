@@ -13,6 +13,7 @@ from flask import Flask
 from albfetcharr.sources import clear_registry, register
 from albfetcharr.sources.base import DownloadProgress, Match, SourceProvider
 from albfetcharr.web.routes import register_routes
+from albfetcharr.web.spec import api
 
 
 def _collect_stream_events(test_client, payload, env=None):
@@ -122,6 +123,7 @@ def make_test_app() -> Flask:
         static_folder=str(static_dir),
     )
     register_routes(app)
+    api.register(app)
     return app
 
 
@@ -378,7 +380,7 @@ def test_api_download_started(client):
 
 @pytest.mark.usefixtures("_clean_registry")
 def test_api_download_missing_source(client):
-    """Test /api/download returns 400 when source is missing."""
+    """Test /api/download returns 422 (schema validation) when source is missing."""
 
     payload = {
         "items": [
@@ -398,10 +400,7 @@ def test_api_download_missing_source(client):
         data=json.dumps(payload),
         content_type="application/json",
     )
-    assert response.status_code == 400
-    data = response.get_json()
-    assert "error" in data
-    assert "source" in data["error"].lower()
+    assert response.status_code == 422
 
 
 @pytest.mark.usefixtures("_clean_registry")

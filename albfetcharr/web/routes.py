@@ -10,6 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from flask import Flask, Response, jsonify, request
+from spectree import Response as SpecResponse
 
 from albfetcharr.config import load_lidarr_config, load_ui_defaults, load_yandex_options
 from albfetcharr.download.locator import check_album_status, find_album_dir
@@ -24,6 +25,8 @@ from albfetcharr.lidarr.client import (
 from albfetcharr.lidarr.importer import post_import_cleanup, run_import
 from albfetcharr.sources import all_providers, get_provider
 from albfetcharr.sources.base import Match
+from albfetcharr.web import schemas
+from albfetcharr.web.spec import api
 
 logger = logging.getLogger("albfetcharr")
 
@@ -81,6 +84,7 @@ def register_routes(app: Flask):
             return error_msg, 500, {"Content-Type": "text/plain"}
 
     @app.route("/api/config")
+    @api.validate(resp=SpecResponse(HTTP_200=schemas.ConfigResponse), tags=["config"])
     def api_config():
         opts = load_yandex_options()
         try:
@@ -99,11 +103,16 @@ def register_routes(app: Flask):
         )
 
     @app.route("/api/sources")
+    @api.validate(resp=SpecResponse(HTTP_200=schemas.SourcesResponse), tags=["sources"])
     def api_sources():
         providers = all_providers()
         return jsonify([{"id": p.id, "name": p.name} for p in providers])
 
     @app.route("/api/wanted")
+    @api.validate(
+        resp=SpecResponse(HTTP_200=schemas.WantedResponse, HTTP_502=schemas.ErrorResponse),
+        tags=["wanted"],
+    )
     def api_wanted():
         cfg = load_lidarr_config()
         try:
@@ -163,14 +172,21 @@ def register_routes(app: Flask):
         return jsonify(result)
 
     @app.route("/api/search", methods=["POST"])
+    @api.validate(
+        json=schemas.SearchRequest,
+        resp=SpecResponse(HTTP_200=schemas.SearchResponse, HTTP_503=schemas.SearchResponse),
+        tags=["search"],
+    )
     def api_search():
-        data = request.json or {}
-        albums = data.get("albums", [])
-        sources = data.get("sources", [])
-        if not isinstance(albums, list):
-            return jsonify({"error": "'albums' must be a list"}), 400
-        if not isinstance(sources, list):
-            return jsonify({"error": "'sources' must be a list"}), 400
+        # spectree only populates request.context.json for JSON content types; a
+        # form/multipart POST leaves it None (no 422 raised). Guard it so a wrong
+        # content type returns a clean 415 instead of crashing on model_dump().
+        body = request.context.json
+        if body is None:
+            return jsonify({"error": "Request body must be JSON"}), 415
+        data = body.model_dump()
+        albums = data["albums"]
+        sources = data["sources"]
 
         all_pvdrs = all_providers()
         if not all_pvdrs:
@@ -212,8 +228,6 @@ def register_routes(app: Flask):
             artist = album_req.get("artist")
             title = album_req.get("title")
             album_id = album_req.get("album_id")
-            if not artist or not title or album_id is None:
-                return jsonify({"error": "Each album must have artist, title, and album_id"}), 400
             root_folder = album_req.get("root_folder", "")
 
             album_results = []
@@ -253,6 +267,10 @@ def register_routes(app: Flask):
         return jsonify(results)
 
     @app.route("/api/download/stream/claim", methods=["POST"])
+    @api.validate(
+        resp=SpecResponse(HTTP_200=schemas.ClaimResponse, HTTP_409=schemas.ErrorResponse),
+        tags=["download"],
+    )
     def api_download_stream_claim():
         do_drain = False
         with _stream_claim_lock:
@@ -304,15 +322,23 @@ def register_routes(app: Flask):
         return jsonify({"claimed": True}), 200
 
     @app.route("/api/download", methods=["POST"])
+    @api.validate(
+        json=schemas.DownloadRequest,
+        resp=SpecResponse(
+            HTTP_202=schemas.DownloadStartedResponse,
+            HTTP_400=schemas.ErrorResponse,
+            HTTP_409=schemas.ErrorResponse,
+        ),
+        tags=["download"],
+    )
     def api_download():
-        data = request.json or {}
-        items = data.get("items", [])
-        if not isinstance(items, list):
-            return jsonify({"error": "'items' must be a list"}), 400
+        # See api_search: guard against a non-JSON content type leaving context.json None.
+        body = request.context.json
+        if body is None:
+            return jsonify({"error": "Request body must be JSON"}), 415
+        items = body.model_dump()["items"]
 
         for item in items:
-            if "source" not in item:
-                return jsonify({"error": "Each item must have a 'source' field"}), 400
             try:
                 get_provider(item["source"])
             except KeyError:
