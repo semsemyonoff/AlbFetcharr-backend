@@ -109,3 +109,38 @@ def test_wanted_unreachable_lidarr_returns_502(client):
     assert resp.status_code == 502
     data = resp.get_json()
     assert "error" in data
+
+
+def test_claim_empty_body_returns_200(client):
+    """Empty-body POST to /api/download/stream/claim must return 200 {claimed: true}."""
+    from albfetcharr.web.routes import _stream_claim_lock, _stream_claim_state
+
+    # Reset claim state so the test starts fresh.
+    with _stream_claim_lock:
+        _stream_claim_state["claimed"] = False
+        _stream_claim_state["claimed_at"] = None
+        _stream_claim_state["last_seen"] = None
+
+    resp = client.post("/api/download/stream/claim")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["claimed"] is True
+
+    # Cleanup
+    with _stream_claim_lock:
+        _stream_claim_state["claimed"] = False
+        _stream_claim_state["claimed_at"] = None
+        _stream_claim_state["last_seen"] = None
+
+
+def test_spec_includes_claim_excludes_sse_stream(client):
+    """openapi.json must include /api/download/stream/claim and NOT /api/download/stream."""
+    resp = client.get("/apidoc/openapi.json")
+    data = resp.get_json()
+    paths = data.get("paths", {})
+    assert "/api/download/stream/claim" in paths, (
+        f"Expected /api/download/stream/claim in paths; got: {list(paths)}"
+    )
+    assert "/api/download/stream" not in paths, (
+        f"Expected /api/download/stream absent from paths; got: {list(paths)}"
+    )

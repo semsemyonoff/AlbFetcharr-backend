@@ -118,3 +118,9 @@ class DownloadStartedResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     status: str
+
+
+class ClaimResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    claimed: bool

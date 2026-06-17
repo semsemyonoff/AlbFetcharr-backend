@@ -261,6 +261,10 @@ def register_routes(app: Flask):
         return jsonify(results)
 
     @app.route("/api/download/stream/claim", methods=["POST"])
+    @api.validate(
+        resp=SpecResponse(HTTP_200=schemas.ClaimResponse, HTTP_409=schemas.ErrorResponse),
+        tags=["download"],
+    )
     def api_download_stream_claim():
         do_drain = False
         with _stream_claim_lock:
