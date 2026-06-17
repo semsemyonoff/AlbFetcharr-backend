@@ -6,7 +6,7 @@ from typing import ClassVar
 import yt_dlp
 
 from albfetcharr.config import YtDlpOptions
-from albfetcharr.sources.base import LogFn, Match, SourceProvider
+from albfetcharr.sources.base import LogFn, Match, ProgressFn, SourceProvider
 from albfetcharr.sources.ytdlp_base import (
     LogAdapter,
     album_dir_from_info,
@@ -71,6 +71,7 @@ class SoundCloudProvider(SourceProvider):
         *,
         quality: str | None = None,
         log: LogFn | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> bool:
         """Download an album from SoundCloud.
 
@@ -81,6 +82,9 @@ class SoundCloudProvider(SourceProvider):
             match: The Match object from search().
             quality: Format string (unused for SoundCloud; uses build_ydl_opts default).
             log: Optional callback for progress lines. When None, yt-dlp writes to stdout.
+            on_progress: Accepted for interface parity; SoundCloud downloads the
+                playlist as a single yt-dlp unit and does not report per-track
+                progress, so it is ignored.
 
         Returns:
             True if download succeeded, False otherwise.

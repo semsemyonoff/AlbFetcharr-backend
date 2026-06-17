@@ -7,7 +7,7 @@ from typing import ClassVar
 from yandex_music import Client
 
 from albfetcharr.config import YandexOptions
-from albfetcharr.sources.base import LogFn, Match, SourceProvider
+from albfetcharr.sources.base import LogFn, Match, ProgressFn, SourceProvider
 
 
 class YandexMusicProvider(SourceProvider):
@@ -104,6 +104,7 @@ class YandexMusicProvider(SourceProvider):
         *,
         quality: str | None = None,
         log: LogFn | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> bool:
         """Download an album from Yandex Music.
 
@@ -111,6 +112,9 @@ class YandexMusicProvider(SourceProvider):
             match: The Match object from search().
             quality: Quality string (numeric: "0", "1", "2"). None uses provider default.
             log: Optional callback for progress lines. When None, writes to stdout.
+            on_progress: Accepted for interface parity; the yandex-music-downloader
+                CLI downloads the album as a single unit, so per-track progress is
+                not reported and this is ignored.
 
         Returns:
             True if download succeeded, False otherwise.

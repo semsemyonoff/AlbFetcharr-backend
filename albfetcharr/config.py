@@ -6,6 +6,11 @@ from dataclasses import dataclass
 
 logger = logging.getLogger("albfetcharr")
 
+# Default in-container path for the optional ytmusicapi OAuth credentials file.
+# Mount your oauth.json here (or override via ALBFETCHARR_YTMUSIC_OAUTH); when the
+# file is absent, search falls back to anonymous requests (today's behavior).
+DEFAULT_YTMUSIC_OAUTH_FILE = "/config/ytmusic_oauth.json"
+
 
 @dataclass
 class YandexOptions:
@@ -47,6 +52,16 @@ class YtDlpOptions:
     audio_format: str = "flac"
     audio_quality: int = 192
     path_pattern: str = "%(artist)s/%(album)s/%(track_number)02d - %(title)s.%(ext)s"
+    cookies_file: str | None = None
+    # Number of attempts per track on transient failures (HTTP 403, bot gate,
+    # network blips). 1 means a single attempt (no retry). Configured via
+    # ALBFETCHARR_YTDLP_RETRIES; also feeds yt-dlp's own retries/extractor_retries.
+    download_retries: int = 3
+    # Optional path to a ytmusicapi OAuth credentials file (oauth.json). When the
+    # file exists, YouTube Music search/album lookups authenticate with it instead
+    # of anonymous (guest) requests, which YouTube bot-gates/throttles. Configured
+    # via ALBFETCHARR_YTMUSIC_OAUTH; absent/missing → anonymous (unchanged).
+    ytmusic_oauth_file: str = DEFAULT_YTMUSIC_OAUTH_FILE
 
 
 @dataclass
@@ -114,6 +129,11 @@ def load_ytdlp_options() -> YtDlpOptions:
         download_dir=os.environ.get("DOWNLOAD_DIR", "/downloads"),
         audio_format=os.environ.get("ALBFETCHARR_YTDLP_FORMAT", "flac"),
         audio_quality=_parse_int(os.environ.get("ALBFETCHARR_YTDLP_QUALITY"), default=192),
+        cookies_file=os.environ.get("ALBFETCHARR_YTDLP_COOKIES") or None,
+        download_retries=max(1, _parse_int(os.environ.get("ALBFETCHARR_YTDLP_RETRIES"), default=3)),
+        ytmusic_oauth_file=(
+            os.environ.get("ALBFETCHARR_YTMUSIC_OAUTH") or DEFAULT_YTMUSIC_OAUTH_FILE
+        ),
     )
 
 

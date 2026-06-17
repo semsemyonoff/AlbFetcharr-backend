@@ -6,6 +6,33 @@ LogFn = Callable[[str], None]
 
 
 @dataclass
+class DownloadProgress:
+    """Fine-grained progress emitted by a provider during ``download()``.
+
+    Album-level providers (Yandex, SoundCloud) download an album as one unit and
+    do not report this. The YouTube Music provider, which downloads track by
+    track, reports one update after each track so the UI can render a real
+    per-track progress bar (instead of a single mid-download bucket) and so the
+    caller can detect a *partial* album (``errors > 0`` while ``produced > 0``).
+    """
+
+    completed: int
+    """Tracks finished so far (downloaded + existing + skipped + errors)."""
+
+    total: int
+    """Total tracks in the album."""
+
+    downloaded: int = 0
+    existing: int = 0
+    skipped: int = 0
+    errors: int = 0
+    message: str = ""
+
+
+ProgressFn = Callable[[DownloadProgress], None]
+
+
+@dataclass
 class Match:
     """Search result from a source provider."""
 
@@ -45,6 +72,15 @@ class SourceProvider(abc.ABC):
     name: ClassVar[str]
     """Human-readable provider name, e.g. "Yandex Music"."""
 
+    streams_progress: ClassVar[bool] = False
+    """Whether download() reports fine-grained per-unit progress via on_progress.
+
+    True for providers that download track-by-track (YouTube Music) and emit a
+    DownloadProgress per track. False (default) for providers that download an
+    album as one opaque unit (Yandex, SoundCloud) — callers should not expect a
+    continuous numeric progress for those and fall back to per-status buckets.
+    """
+
     @abc.abstractmethod
     def search(self, artist: str, album: str, limit: int = 5) -> list[Match]:
         """Search for an album by artist and title.
@@ -66,6 +102,7 @@ class SourceProvider(abc.ABC):
         *,
         quality: str | None = None,
         log: LogFn | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> bool:
         """Download an album.
 
@@ -76,8 +113,14 @@ class SourceProvider(abc.ABC):
             log: Optional callback for progress lines. When None, the provider writes
                  to stdout (CLI). When supplied, web passes log_queue.put to relay
                  lines into SSE endpoint /api/download/stream.
+            on_progress: Optional callback receiving a DownloadProgress after each
+                 unit of work (e.g. each track) for fine-grained UI progress.
+                 Providers that download an album as a single unit may ignore it.
 
         Returns:
-            True if download succeeded, False otherwise.
+            True if the album is usable (at least one track produced/existed),
+            False otherwise. A *partial* album (some tracks errored but ≥1
+            succeeded) still returns True — callers detect partiality from the
+            DownloadProgress (errors > 0), not the bool.
         """
         ...

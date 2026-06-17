@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from albfetcharr.cli import cmd_download, cmd_wanted, detect_source, main
+from albfetcharr.sources.base import DownloadProgress
 
 
 def test_wanted_help():
@@ -133,6 +134,44 @@ def test_download_with_explicit_source(mock_get_provider):
         cmd_download(args)
 
     mock_get_provider.assert_called_with("yandex")
+
+
+@patch("albfetcharr.cli.get_provider")
+def test_download_success_reports_clean(mock_get_provider, capsys):
+    """A non-partial success (no on_progress errors) prints the plain success line."""
+    mock_provider = MagicMock()
+    mock_provider.download.return_value = True
+    mock_get_provider.return_value = mock_provider
+
+    args = argparse.Namespace(url="https://music.yandex.ru/album/1", source=None)
+    cmd_download(args)
+
+    out = capsys.readouterr().out
+    assert "Download completed successfully." in out
+    assert "partial" not in out.lower()
+
+
+@patch("albfetcharr.cli.get_provider")
+def test_download_partial_reports_partial(mock_get_provider, capsys):
+    """A partial album (download returns True but some tracks errored) is reported
+    as partial, not an unqualified success."""
+    mock_provider = MagicMock()
+
+    def _dl(match, *, on_progress=None, **kwargs):
+        if on_progress:
+            on_progress(DownloadProgress(completed=10, total=10, downloaded=7, errors=3))
+        return True
+
+    mock_provider.download.side_effect = _dl
+    mock_get_provider.return_value = mock_provider
+
+    args = argparse.Namespace(url="https://music.youtube.com/browse/X", source="youtube_music")
+    cmd_download(args)
+
+    out = capsys.readouterr().out
+    assert "partially" in out.lower()
+    assert "3 track(s) failed" in out
+    assert "7/10 available" in out
 
 
 @patch("albfetcharr.cli.get_provider")

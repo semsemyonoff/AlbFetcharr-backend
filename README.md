@@ -108,7 +108,7 @@ AlbFetcharr поддерживает несколько источников д�
 | Источник | Требования | Заметки |
 |---|---|---|
 | **Yandex Music** | `YANDEX_MUSIC_TOKEN` | Наиболее точный поиск, полная информация об альбомах и исполнителях |
-| **YouTube Music** | Включен по умолчанию | Поиск может быть менее точным, рекомендуется проверить результаты; теги `album` и `tracknumber` могут требовать ручной корректировки |
+| **YouTube Music** | Включен по умолчанию | Поиск через `ytmusicapi` (работает анонимно, но YouTube часто ограничивает анонимные запросы — рекомендуется OAuth, см. ниже); загрузка по отдельным трекам, опционально с `cookies.txt` (см. ниже) |
 | **SoundCloud** | Включен по умолчанию | Для сетов (плейлистов), поиск может быть менее точным; теги могут быть неполными |
 
 ### Особенности источников
@@ -118,11 +118,48 @@ AlbFetcharr поддерживает несколько источников д�
 - Лучшее качество метаданных
 - Поддержка различных форматов (AAC 64/192, FLAC)
 
-**YouTube Music и SoundCloud**
-- Используют [yt-dlp](https://github.com/yt-dlp/yt-dlp) для поиска и загрузки
-- Требуют ffmpeg для конвертации аудио
+**YouTube Music**
+- Поиск выполняется через [ytmusicapi](https://github.com/sigma67/ytmusicapi). Работает и без авторизации, но YouTube всё чаще «бот-гейтит» анонимные запросы — поиск начинает возвращать **пустые результаты**. Лекарство — авторизация через OAuth (опционально, см. [OAuth для поиска YouTube Music](#oauth-для-поиска-youtube-music))
+- Загрузка идёт по отдельным трекам альбома (`youtube.com/watch?v=…`) через [yt-dlp](https://github.com/yt-dlp/yt-dlp), теги пишутся из метаданных альбома ytmusicapi (`title`, `artist`, `album`, `albumartist`, `tracknumber`, `date`)
+- Для загрузки YouTube нужны **JavaScript-рантайм `deno`** (на `PATH`) и пакет **`yt-dlp-ejs`**: yt-dlp 2026.x решает с их помощью signature/n-challenge YouTube. Без них часть форматов недоступна и загрузка падает с `HTTP 403`. В Docker-образ оба уже встроены; при запуске без Docker установите `deno` и `pip install yt-dlp-ejs`
+- Каждый трек скачивается с повторами при временных ошибках (например, `HTTP 403`) — число попыток задаётся `ALBFETCHARR_YTDLP_RETRIES` (по умолчанию 3)
+- Современный YouTube часто требует cookies при загрузке («Sign in to confirm you're not a bot»). Если вы столкнулись с этой ошибкой, передайте файл `cookies.txt` (см. [Cookies для YouTube](#cookies-для-youtube)). Без cookies поиск и загрузка остальных источников работают как прежде
+- Если какие-то треки недоступны или не скачались после всех попыток, они пропускаются, а альбом импортируется **частично** (в логе строка `partial: N/M`, в интерфейсе — пометка «Частично», а не «Ошибка»); недостающие треки остаются в списке wanted
+
+**SoundCloud**
+- Использует [yt-dlp](https://github.com/yt-dlp/yt-dlp) для поиска и загрузки
+- Требует ffmpeg для конвертации аудио
 - Поиск может возвращать неточные результаты — **рекомендуется проверить результаты в веб-интерфейсе перед загрузкой**
 - Теги `artist`, `album`, `title`, `tracknumber` заполняются из метаданных плейлиста; если источник слабо помечен, может потребоваться ручная корректировка перед импортом в Lidarr
+
+### Cookies для YouTube
+
+Загрузка из YouTube может потребовать cookies авторизованного аккаунта (ошибка *«Sign in to confirm you're not a bot»*). Поддержка cookies **опциональна**:
+
+1. Экспортируйте cookies в формате Netscape (`cookies.txt`) из браузера, где вы авторизованы на YouTube — например, расширением [Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY) или `yt-dlp --cookies-from-browser`.
+2. Положите файл в каталог, доступный контейнеру (например, рядом с загрузками), и укажите путь **внутри контейнера** в переменной `ALBFETCHARR_YTDLP_COOKIES`.
+3. Перезапустите сервис. Файл подхватывается автоматически только если он существует.
+
+Если переменная не задана или файл отсутствует, ничего не меняется: SoundCloud и Яндекс Музыка работают как прежде. Поиск YouTube эти cookies не использует — для него см. OAuth ниже.
+
+### OAuth для поиска YouTube Music
+
+Анонимный поиск через `ytmusicapi` со временем начинает «бот-гейтиться» YouTube — запрос отвечает успешно, но **результаты пустые**. Чтобы запросы не были анонимными, поиск можно авторизовать через OAuth. Это **опционально**: без файла всё работает как раньше (анонимно).
+
+Что понадобится — один JSON-файл с токеном (он сам обновляется, не протухает как cookies) и OAuth-клиент Google (`client_id` + `client_secret`, создаётся один раз):
+
+1. **Создайте OAuth-клиент в Google Cloud.** В [Google Cloud Console](https://console.cloud.google.com/) → создайте проект → включите **YouTube Data API v3** → *Credentials* → *Create credentials* → *OAuth client ID* → тип **TVs and Limited Input devices**. Получите `client_id` и `client_secret`.
+2. **Сгенерируйте токен.** На любой машине с Python: `pip install ytmusicapi`, затем
+   ```bash
+   ytmusicapi oauth --client-id <CLIENT_ID> --client-secret <CLIENT_SECRET>
+   ```
+   Пройдите авторизацию в браузере по показанной ссылке. Команда создаст файл `oauth.json` с токеном (`access_token`, `refresh_token`, …).
+3. **Передайте client_id/secret приложению** одним из способов:
+   - дописать в `oauth.json` два поля: `"client_id": "...", "client_secret": "..."` (тогда всё в одном файле), **или**
+   - задать переменные `ALBFETCHARR_YTMUSIC_CLIENT_ID` и `ALBFETCHARR_YTMUSIC_CLIENT_SECRET`.
+4. **Смонтируйте файл в контейнер** по пути из `ALBFETCHARR_YTMUSIC_OAUTH` (по умолчанию `/config/ytmusic_oauth.json`) и перезапустите сервис. Файл подхватывается автоматически, только если существует; иначе поиск остаётся анонимным.
+
+Приложение читает токен из файла как dict и **не перезаписывает** ваш файл при обновлении токена. Если файл повреждён или не хватает `client_id`/`client_secret`, поиск тихо откатывается к анонимному (в логах — предупреждение). Подробнее про получение токена — в [документации ytmusicapi](https://ytmusicapi.readthedocs.io/en/stable/setup/oauth.html).
 
 ## Переменные окружения
 
@@ -164,6 +201,11 @@ AlbFetcharr поддерживает несколько источников д�
 | `ALBFETCHARR_UNSAFE_PATH` | `0` | Не очищать путь от недопустимых символов (`0` / `1`) |
 | `ALBFETCHARR_YTDLP_FORMAT` | `flac` | Формат аудио для yt-dlp источников: `flac`, `m4a`, `mp3` |
 | `ALBFETCHARR_YTDLP_QUALITY` | `192` | Битрейт для сжатых форматов (кбит/с), игнорируется для FLAC |
+| `ALBFETCHARR_YTDLP_COOKIES` | — | Путь (внутри контейнера) к Netscape `cookies.txt` для загрузки YouTube/SoundCloud за бот-гейтом. Опционально; если не задан или файл отсутствует — cookies не используются (см. [Cookies для YouTube](#cookies-для-youtube)) |
+| `ALBFETCHARR_YTDLP_RETRIES` | `3` | Число попыток загрузки одного трека для yt-dlp источников при временных ошибках (например, `HTTP 403`). Минимум 1 (без повторов) |
+| `ALBFETCHARR_YTMUSIC_OAUTH` | `/config/ytmusic_oauth.json` | Путь (внутри контейнера) к OAuth-файлу `ytmusicapi` для авторизованного поиска YouTube Music. Используется только если файл существует; иначе поиск анонимный (см. [OAuth для поиска YouTube Music](#oauth-для-поиска-youtube-music)) |
+| `ALBFETCHARR_YTMUSIC_CLIENT_ID` | — | `client_id` OAuth-клиента Google для поиска YouTube Music (если не задан внутри самого OAuth-файла) |
+| `ALBFETCHARR_YTMUSIC_CLIENT_SECRET` | — | `client_secret` OAuth-клиента Google для поиска YouTube Music (если не задан внутри самого OAuth-файла) |
 | `ALBFETCHARR_ENABLE_YOUTUBE_MUSIC` | `1` | Включить YouTube Music источник (`0` / `1`) |
 | `ALBFETCHARR_ENABLE_SOUNDCLOUD` | `1` | Включить SoundCloud источник (`0` / `1`) |
 
@@ -262,7 +304,9 @@ docker compose run --rm albfetcharr download --source soundcloud "https://soundc
 
 - [yandex-music-downloader](https://github.com/llistochek/yandex-music-downloader) — загрузка треков из Яндекс Музыки
 - [yandex-music](https://github.com/MarshalX/yandex-music-api) — поиск альбомов через API Яндекс Музыки
+- [ytmusicapi](https://github.com/sigma67/ytmusicapi) — поиск альбомов в YouTube Music (без авторизации)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) — загрузка из YouTube Music и SoundCloud
+- [yt-dlp-ejs](https://github.com/yt-dlp/ejs) + [deno](https://deno.com/) — JS-рантайм и challenge-solver для YouTube (решение signature/n-challenge; без них формат недоступен и загрузка падает с 403). Встроены в Docker-образ; при запуске без Docker установите `deno` и `pip install yt-dlp-ejs`
 - [ffmpeg](https://ffmpeg.org/) — конвертация аудио для yt-dlp источников (включён в Docker-образ; требуется на хосте при запуске без Docker)
 - [Lidarr](https://lidarr.audio/) — управление библиотекой, wanted-список, импорт
 
