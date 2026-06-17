@@ -172,14 +172,15 @@ def register_routes(app: Flask):
         return jsonify(result)
 
     @app.route("/api/search", methods=["POST"])
+    @api.validate(
+        json=schemas.SearchRequest,
+        resp=SpecResponse(HTTP_200=schemas.SearchResponse, HTTP_503=schemas.SearchResponse),
+        tags=["search"],
+    )
     def api_search():
-        data = request.json or {}
-        albums = data.get("albums", [])
-        sources = data.get("sources", [])
-        if not isinstance(albums, list):
-            return jsonify({"error": "'albums' must be a list"}), 400
-        if not isinstance(sources, list):
-            return jsonify({"error": "'sources' must be a list"}), 400
+        data = request.context.json.model_dump()
+        albums = data["albums"]
+        sources = data["sources"]
 
         all_pvdrs = all_providers()
         if not all_pvdrs:
@@ -221,8 +222,6 @@ def register_routes(app: Flask):
             artist = album_req.get("artist")
             title = album_req.get("title")
             album_id = album_req.get("album_id")
-            if not artist or not title or album_id is None:
-                return jsonify({"error": "Each album must have artist, title, and album_id"}), 400
             root_folder = album_req.get("root_folder", "")
 
             album_results = []

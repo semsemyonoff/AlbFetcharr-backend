@@ -43,3 +43,55 @@ class WantedAlbum(BaseModel):
 
 class WantedResponse(RootModel[list[WantedAlbum]]):
     pass
+
+
+class AlbumQuery(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    artist: str
+    title: str
+    album_id: int
+    root_folder: str = ""
+
+
+class SearchRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    albums: list[AlbumQuery]
+    sources: list[str] = []
+
+
+class SearchError(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    source: str
+    source_name: str
+    message: str
+
+
+class MatchResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    source: str
+    source_name: str
+    match_url: str
+    match_title: str
+    match_artists: str
+    cover_url: str = ""
+    year: int | None = None
+    track_count: int | None = None
+
+
+class SearchResultItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    artist: str
+    title: str
+    album_id: int
+    root_folder: str
+    results: list[MatchResult]
+    errors: list[SearchError]
+
+
+class SearchResponse(RootModel[list[SearchResultItem]]):
+    pass
