@@ -1,6 +1,7 @@
 """Tests for spectree OpenAPI spec and doc pages."""
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -29,7 +30,8 @@ def test_openapi_json_ok(client):
     assert resp.status_code == 200
     data = json.loads(resp.get_data())
     assert data["info"]["title"] == "AlbFetcharr API"
-    assert data["openapi"].startswith("3.1")
+    # spec.py pins openapi_version="3.1.0" explicitly (the 2.0.1 default is ambiguous).
+    assert data["openapi"] == "3.1.0"
 
 
 def test_scalar_page_ok(client):
@@ -53,8 +55,14 @@ def test_scalar_cdn_url_is_unpinned(client):
     """Assert the Scalar page loads @scalar/api-reference without a pinned version suffix."""
     resp = client.get("/apidoc/scalar", follow_redirects=True)
     body = resp.get_data(as_text=True)
-    # If spectree pins a version this assertion will surface it so we can update the plan.
     assert "@scalar/api-reference" in body
+    # The package must be referenced WITHOUT a pinned version (e.g. not
+    # "@scalar/api-reference@1.60.0"); a version suffix would mean the docs no
+    # longer float to the latest CDN release. If spectree starts pinning, this
+    # surfaces it so we can revisit the Overview framing / optional hardening.
+    assert not re.search(r"@scalar/api-reference@\d", body), (
+        "Scalar CDN URL is version-pinned; expected unpinned-latest"
+    )
 
 
 def test_strict_mode_excludes_root(client):

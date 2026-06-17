@@ -204,6 +204,8 @@ def test_download_valid_items_accepted(client):
 
 def test_download_quality_string_accepted(client):
     """quality as a string ('2') is accepted via int|str|None union and returns 202."""
+    from albfetcharr.web.routes import download_lock
+
     payload = {
         "items": [
             {
@@ -230,3 +232,7 @@ def test_download_quality_string_accepted(client):
             content_type="application/json",
         )
     assert resp.status_code == 202
+    # Wait for the background thread to release the lock before the next test.
+    acquired = download_lock.acquire(timeout=5.0)
+    if acquired:
+        download_lock.release()
