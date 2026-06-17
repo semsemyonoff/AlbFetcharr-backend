@@ -1,6 +1,7 @@
 """Shared helper for yt-dlp-based source providers (YouTube Music, SoundCloud)."""
 
 import logging
+import os
 from pathlib import Path
 
 from mutagen import File as MutagenFile
@@ -53,6 +54,22 @@ class LogAdapter:
         self._log(f"ERROR: {msg}")
 
 
+def apply_cookies(ydl_opts: dict, opts: YtDlpOptions) -> None:
+    """Add a yt-dlp cookiefile to ydl_opts when a configured cookies file exists.
+
+    Mutates ydl_opts in place, setting ``ydl_opts["cookiefile"]`` only when
+    ``opts.cookies_file`` is truthy and the file exists on disk. When unset or
+    missing, ydl_opts is left untouched (preserving the no-cookies default
+    behavior byte-for-byte).
+
+    Args:
+        ydl_opts: yt-dlp options dict to mutate in place.
+        opts: YtDlpOptions dataclass carrying the optional cookies_file path.
+    """
+    if opts.cookies_file and os.path.exists(opts.cookies_file):
+        ydl_opts["cookiefile"] = opts.cookies_file
+
+
 def build_ydl_opts(opts: YtDlpOptions, *, search: bool) -> dict:
     """Build yt-dlp options dict for search or download.
 
@@ -65,14 +82,16 @@ def build_ydl_opts(opts: YtDlpOptions, *, search: bool) -> dict:
         Dictionary suitable for YoutubeDL.__init__.
     """
     if search:
-        return {
+        ydl_opts = {
             "quiet": True,
             "no_warnings": True,
             "extract_flat": "in_playlist",
             "skip_download": True,
         }
+        apply_cookies(ydl_opts, opts)
+        return ydl_opts
 
-    return {
+    ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": str(Path(opts.download_dir) / opts.path_pattern),
         "postprocessors": [
@@ -93,6 +112,8 @@ def build_ydl_opts(opts: YtDlpOptions, *, search: bool) -> dict:
             "playlist_index:%(track)s",
         ],
     }
+    apply_cookies(ydl_opts, opts)
+    return ydl_opts
 
 
 def parse_search_entry(entry: dict, *, source: str) -> Match | None:

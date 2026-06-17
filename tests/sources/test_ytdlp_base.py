@@ -5,6 +5,7 @@ from pathlib import Path
 from albfetcharr.config import YtDlpOptions
 from albfetcharr.sources.ytdlp_base import (
     album_dir_from_info,
+    apply_cookies,
     build_ydl_opts,
     parse_search_entry,
 )
@@ -94,6 +95,69 @@ class TestBuildYdlOpts:
         parse_metadata = download_opts["parse_metadata"]
         assert "playlist:%(album)s" in parse_metadata
         assert "playlist_index:%(track)s" in parse_metadata
+
+
+class TestApplyCookies:
+    """Test apply_cookies helper and its integration with build_ydl_opts."""
+
+    def test_no_cookies_file_leaves_dict_untouched(self):
+        """When cookies_file is None, no cookiefile key is added."""
+        opts = YtDlpOptions(download_dir="/downloads")
+        ydl_opts = {}
+        apply_cookies(ydl_opts, opts)
+        assert "cookiefile" not in ydl_opts
+
+    def test_existing_cookies_file_added(self, tmp_path):
+        """When cookies_file is set and exists, cookiefile is added."""
+        cookies = tmp_path / "cookies.txt"
+        cookies.write_text("# Netscape HTTP Cookie File\n")
+        opts = YtDlpOptions(download_dir="/downloads", cookies_file=str(cookies))
+        ydl_opts = {}
+        apply_cookies(ydl_opts, opts)
+        assert ydl_opts["cookiefile"] == str(cookies)
+
+    def test_missing_cookies_file_not_added(self, tmp_path):
+        """When cookies_file is set but the file does not exist, nothing is added."""
+        missing = tmp_path / "nope.txt"
+        opts = YtDlpOptions(download_dir="/downloads", cookies_file=str(missing))
+        ydl_opts = {}
+        apply_cookies(ydl_opts, opts)
+        assert "cookiefile" not in ydl_opts
+
+    def test_build_search_opts_adds_cookiefile_when_present(self, tmp_path):
+        """build_ydl_opts(search=True) carries the cookiefile when configured."""
+        cookies = tmp_path / "cookies.txt"
+        cookies.write_text("# Netscape HTTP Cookie File\n")
+        opts = YtDlpOptions(download_dir="/downloads", cookies_file=str(cookies))
+        search_opts = build_ydl_opts(opts, search=True)
+        assert search_opts["cookiefile"] == str(cookies)
+
+    def test_build_download_opts_adds_cookiefile_when_present(self, tmp_path):
+        """build_ydl_opts(search=False) carries the cookiefile when configured."""
+        cookies = tmp_path / "cookies.txt"
+        cookies.write_text("# Netscape HTTP Cookie File\n")
+        opts = YtDlpOptions(download_dir="/downloads", cookies_file=str(cookies))
+        download_opts = build_ydl_opts(opts, search=False)
+        assert download_opts["cookiefile"] == str(cookies)
+
+    def test_build_search_opts_no_cookiefile_by_default(self):
+        """build_ydl_opts(search=True) has no cookiefile key without cookies."""
+        opts = YtDlpOptions(download_dir="/downloads")
+        search_opts = build_ydl_opts(opts, search=True)
+        assert "cookiefile" not in search_opts
+
+    def test_build_download_opts_no_cookiefile_by_default(self):
+        """build_ydl_opts(search=False) has no cookiefile key without cookies."""
+        opts = YtDlpOptions(download_dir="/downloads")
+        download_opts = build_ydl_opts(opts, search=False)
+        assert "cookiefile" not in download_opts
+
+    def test_build_opts_no_cookiefile_when_file_missing(self, tmp_path):
+        """A configured-but-missing cookies file adds nothing to either branch."""
+        missing = tmp_path / "nope.txt"
+        opts = YtDlpOptions(download_dir="/downloads", cookies_file=str(missing))
+        assert "cookiefile" not in build_ydl_opts(opts, search=True)
+        assert "cookiefile" not in build_ydl_opts(opts, search=False)
 
 
 class TestParseSearchEntry:

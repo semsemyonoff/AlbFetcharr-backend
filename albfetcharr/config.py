@@ -47,6 +47,7 @@ class YtDlpOptions:
     audio_format: str = "flac"
     audio_quality: int = 192
     path_pattern: str = "%(artist)s/%(album)s/%(track_number)02d - %(title)s.%(ext)s"
+    cookies_file: str | None = None
 
 
 @dataclass
@@ -114,6 +115,7 @@ def load_ytdlp_options() -> YtDlpOptions:
         download_dir=os.environ.get("DOWNLOAD_DIR", "/downloads"),
         audio_format=os.environ.get("ALBFETCHARR_YTDLP_FORMAT", "flac"),
         audio_quality=_parse_int(os.environ.get("ALBFETCHARR_YTDLP_QUALITY"), default=192),
+        cookies_file=os.environ.get("ALBFETCHARR_YTDLP_COOKIES") or None,
     )
 
 
