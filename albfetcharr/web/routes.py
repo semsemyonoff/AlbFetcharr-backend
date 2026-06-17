@@ -10,6 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from flask import Flask, Response, jsonify, request
+from spectree import Response as SpecResponse
 
 from albfetcharr.config import load_lidarr_config, load_ui_defaults, load_yandex_options
 from albfetcharr.download.locator import check_album_status, find_album_dir
@@ -24,6 +25,8 @@ from albfetcharr.lidarr.client import (
 from albfetcharr.lidarr.importer import post_import_cleanup, run_import
 from albfetcharr.sources import all_providers, get_provider
 from albfetcharr.sources.base import Match
+from albfetcharr.web import schemas
+from albfetcharr.web.spec import api
 
 logger = logging.getLogger("albfetcharr")
 
@@ -81,6 +84,7 @@ def register_routes(app: Flask):
             return error_msg, 500, {"Content-Type": "text/plain"}
 
     @app.route("/api/config")
+    @api.validate(resp=SpecResponse(HTTP_200=schemas.ConfigResponse), tags=["config"])
     def api_config():
         opts = load_yandex_options()
         try:
@@ -99,11 +103,16 @@ def register_routes(app: Flask):
         )
 
     @app.route("/api/sources")
+    @api.validate(resp=SpecResponse(HTTP_200=schemas.SourcesResponse), tags=["sources"])
     def api_sources():
         providers = all_providers()
         return jsonify([{"id": p.id, "name": p.name} for p in providers])
 
     @app.route("/api/wanted")
+    @api.validate(
+        resp=SpecResponse(HTTP_200=schemas.WantedResponse, HTTP_502=schemas.ErrorResponse),
+        tags=["wanted"],
+    )
     def api_wanted():
         cfg = load_lidarr_config()
         try:
