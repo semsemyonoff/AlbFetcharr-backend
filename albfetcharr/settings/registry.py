@@ -68,6 +68,9 @@ _CATALOG: list[Setting] = [
     # ── Tier 4 — UI prefs (global default; per-browser in localStorage) ─────
     Setting("default_lang",          "enum", "en",    ["en", "ru"],                  "ALBFETCHARR_DEFAULT_LANG",          "global",  False, "UI",                "ui"),
     Setting("default_theme",         "enum", "system",["system", "light", "dark"],   "ALBFETCHARR_DEFAULT_THEME",         "global",  False, "UI",                "ui"),
+
+    # ── Server — process-level knobs ────────────────────────────────────────
+    Setting("app_log_level",         "enum", "INFO",  ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], "ALBFETCHARR_LOG_LEVEL", "global", False, "Server", "app"),
 ]
 # fmt: on
 

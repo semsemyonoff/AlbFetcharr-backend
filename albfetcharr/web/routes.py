@@ -23,6 +23,7 @@ from albfetcharr.lidarr.client import (
 )
 from albfetcharr.lidarr.importer import post_import_cleanup, run_import
 from albfetcharr.lidarr.library_map import parse_library_map_str
+from albfetcharr.logging_config import set_level
 from albfetcharr.settings import crypto, registry, store
 from albfetcharr.settings.resolver import resolve_app_config, resolve_value
 from albfetcharr.sources import all_providers, bootstrap_default_providers, get_provider
@@ -179,6 +180,17 @@ def register_routes(app: Flask):
             )
             return error_msg, 500, {"Content-Type": "text/plain"}
 
+    @app.route("/api/health")
+    def api_health():
+        """Liveness probe — always 200 when the app is serving.
+
+        Intentionally undecorated (excluded from the strict OpenAPI spec, like
+        the SSE stream) and dependency-free: it does not touch Lidarr, the DB,
+        or any source, so deploy/orchestration health checks can hit it without
+        producing error-status access-log noise.
+        """
+        return jsonify({"status": "ok"}), 200
+
     @app.route("/api/config")
     @api.validate(resp=SpecResponse(HTTP_200=schemas.ConfigResponse), tags=["config"])
     def api_config():
@@ -243,6 +255,7 @@ def register_routes(app: Flask):
                 store.set_raw(key, str(value), is_secret=False)
 
         bootstrap_default_providers()
+        set_level(resolve_app_config().log_level)
         return jsonify(_build_settings_items())
 
     @app.route("/api/settings/<key>", methods=["DELETE"])
@@ -259,6 +272,7 @@ def register_routes(app: Flask):
             return jsonify({"error": f"Unknown setting: {key!r}"}), 404
         store.delete(key)
         bootstrap_default_providers()
+        set_level(resolve_app_config().log_level)
         return jsonify(_build_settings_items())
 
     @app.route("/api/wanted")

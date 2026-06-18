@@ -87,6 +87,8 @@ class AppConfig:
     enable_yandex: bool = True
     enable_youtube_music: bool = True
     enable_soundcloud: bool = True
+    # Application log verbosity (ALBFETCHARR_LOG_LEVEL / app_log_level setting).
+    log_level: str = "INFO"
 
 
 def _parse_int(value: str | None, *, default: int) -> int:

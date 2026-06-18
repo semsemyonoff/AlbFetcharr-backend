@@ -187,6 +187,7 @@ AlbFetcharr поддерживает несколько источников д�
 | `CHOWN_DIRS` | `true` | Устанавливать владельца для папок при старте (`true` / `false`) |
 | `ALBFETCHARR_DEFAULT_LANG` | `en` | Язык UI по умолчанию (`en` / `ru`) |
 | `ALBFETCHARR_DEFAULT_THEME` | `system` | Тема UI по умолчанию (`system` / `light` / `dark`) |
+| `ALBFETCHARR_LOG_LEVEL` | `INFO` | Уровень логирования приложения: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. На `DEBUG` включается полное логирование запросов и ответов внутренних сервисов (HTTP-вызовы Lidarr и т. п.). Также доступно как настройка `app_log_level` (применяется без перезапуска) |
 
 ### Параметры загрузки
 

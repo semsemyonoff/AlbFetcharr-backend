@@ -8,6 +8,7 @@ from albfetcharr.download.tags import clear_comments
 from albfetcharr.lidarr.client import get_lidarr_track_count, get_root_folders, get_wanted_albums
 from albfetcharr.lidarr.importer import post_import_cleanup, run_import
 from albfetcharr.lidarr.library_map import parse_library_map_str, validate_library_map
+from albfetcharr.logging_config import configure_logging
 from albfetcharr.settings.resolver import resolve_app_config
 from albfetcharr.sources import Match, bootstrap_default_providers, get_provider
 
@@ -261,6 +262,7 @@ def main():
         parser.print_help()
         sys.exit(0)
 
+    configure_logging(resolve_app_config().log_level)
     bootstrap_default_providers()
 
     args.func(args)

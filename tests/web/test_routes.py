@@ -137,6 +137,14 @@ def client():
 
 
 @pytest.mark.usefixtures("_clean_registry")
+def test_api_health_ok(client):
+    """/api/health is a dependency-free 200 liveness probe."""
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "ok"}
+
+
+@pytest.mark.usefixtures("_clean_registry")
 @responses.activate
 def test_api_config(client):
     """Test /api/config endpoint returns default quality."""

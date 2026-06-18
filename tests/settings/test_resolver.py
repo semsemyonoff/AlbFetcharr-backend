@@ -222,6 +222,15 @@ class TestResolveAppConfigDefaults:
         assert cfg.enable_youtube_music is True
         assert cfg.enable_soundcloud is True
 
+    def test_log_level_default(self, tmp_db, clean_env):
+        cfg = resolve_app_config()
+        assert cfg.log_level == "INFO"
+
+    def test_log_level_from_env(self, tmp_db, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_LOG_LEVEL", "DEBUG")
+        cfg = resolve_app_config()
+        assert cfg.log_level == "DEBUG"
+
     def test_yandex_quality_default(self, tmp_db, clean_env):
         cfg = resolve_app_config()
         assert cfg.yandex_options.quality == "2"
