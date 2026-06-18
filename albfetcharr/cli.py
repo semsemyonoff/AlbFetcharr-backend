@@ -3,12 +3,12 @@
 import argparse
 import sys
 
-from albfetcharr.config import load_app_config
 from albfetcharr.download.locator import check_album_status, find_album_dir
 from albfetcharr.download.tags import clear_comments
 from albfetcharr.lidarr.client import get_lidarr_track_count, get_root_folders, get_wanted_albums
 from albfetcharr.lidarr.importer import post_import_cleanup, run_import
 from albfetcharr.lidarr.library_map import validate_library_map
+from albfetcharr.settings.resolver import resolve_app_config
 from albfetcharr.sources import Match, bootstrap_default_providers, get_provider
 
 
@@ -44,7 +44,7 @@ def cmd_wanted(args):
     """Handle the 'wanted' subcommand."""
     import os
 
-    cfg = load_app_config()
+    cfg = resolve_app_config()
     lidarr_cfg = cfg.lidarr
     download_dir = os.environ.get("DOWNLOAD_DIR", "/downloads")
 
