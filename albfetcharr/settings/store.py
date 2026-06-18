@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 
 _DEFAULT_DB_PATH = "/config/albfetcharr.db"
@@ -31,6 +32,12 @@ def _db_path() -> str:
 
 
 def _connect(path: str) -> sqlite3.Connection:
+    # Ensure the parent directory exists — sqlite3.connect creates the DB file
+    # but not its directory, so a missing /config mount would otherwise raise
+    # OperationalError on the first read/write. Skip for ":memory:" / bare names.
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute(_CREATE_TABLE)
@@ -45,7 +52,7 @@ def _now_utc() -> str:
 def get_raw(key: str, *, db_path: str | None = None) -> tuple[str, bool] | None:
     """Return (value, is_secret) for key, or None if absent."""
     path = db_path or _db_path()
-    with _connect(path) as conn:
+    with closing(_connect(path)) as conn:
         row = conn.execute("SELECT value, is_secret FROM settings WHERE key = ?", (key,)).fetchone()
     if row is None:
         return None
@@ -56,7 +63,7 @@ def set_raw(key: str, value: str, *, is_secret: bool = False, db_path: str | Non
     """Upsert key=value; stamps updated_at to current UTC time."""
     path = db_path or _db_path()
     now = _now_utc()
-    with _connect(path) as conn:
+    with closing(_connect(path)) as conn:
         conn.execute(
             """
             INSERT INTO settings (key, value, is_secret, updated_at)
@@ -74,7 +81,7 @@ def set_raw(key: str, value: str, *, is_secret: bool = False, db_path: str | Non
 def delete(key: str, *, db_path: str | None = None) -> bool:
     """Delete key. Returns True if a row was removed, False if key was absent."""
     path = db_path or _db_path()
-    with _connect(path) as conn:
+    with closing(_connect(path)) as conn:
         cursor = conn.execute("DELETE FROM settings WHERE key = ?", (key,))
         conn.commit()
     return cursor.rowcount > 0
@@ -83,6 +90,6 @@ def delete(key: str, *, db_path: str | None = None) -> bool:
 def all_raw(*, db_path: str | None = None) -> dict[str, tuple[str, bool]]:
     """Return {key: (value, is_secret)} for all stored settings."""
     path = db_path or _db_path()
-    with _connect(path) as conn:
+    with closing(_connect(path)) as conn:
         rows = conn.execute("SELECT key, value, is_secret FROM settings").fetchall()
     return {row["key"]: (row["value"], bool(row["is_secret"])) for row in rows}

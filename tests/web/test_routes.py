@@ -1573,7 +1573,6 @@ def _wait_for_lock(timeout=5.0):
 @pytest.mark.usefixtures("_clean_registry")
 def test_overrides_clear_comments_enabled_via_override():
     """yandex_clear_comments=1 in overrides triggers comment stripping even when env is 0."""
-    received = {}
 
     class SuccessYandex(SourceProvider):
         id = "yandex"
@@ -1620,7 +1619,6 @@ def test_overrides_clear_comments_enabled_via_override():
                     test_client.get("/api/download/stream").get_data(as_text=True)
 
     mock_cc.assert_called_once()
-    del received
 
 
 @pytest.mark.usefixtures("_clean_registry")
