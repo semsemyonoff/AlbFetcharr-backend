@@ -5,7 +5,7 @@ import logging
 from flask import Flask
 
 from albfetcharr.lidarr.client import get_root_folders
-from albfetcharr.lidarr.library_map import validate_library_map
+from albfetcharr.lidarr.library_map import parse_library_map_str, validate_library_map
 from albfetcharr.settings.resolver import resolve_app_config
 from albfetcharr.sources import bootstrap_default_providers
 from albfetcharr.web.routes import register_routes
@@ -27,7 +27,7 @@ def create_app() -> Flask:
         lidarr = resolve_app_config().lidarr
         if lidarr.base_url and lidarr.api_key:
             root_folders = get_root_folders(lidarr.base_url, lidarr.api_key)
-            validate_library_map(root_folders)
+            validate_library_map(root_folders, parse_library_map_str(lidarr.library_map))
     except Exception:
         logger.warning("Could not validate library map against Lidarr (is Lidarr available?)")
 

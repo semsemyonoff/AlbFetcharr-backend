@@ -7,7 +7,7 @@ from albfetcharr.download.locator import check_album_status, find_album_dir
 from albfetcharr.download.tags import clear_comments
 from albfetcharr.lidarr.client import get_lidarr_track_count, get_root_folders, get_wanted_albums
 from albfetcharr.lidarr.importer import post_import_cleanup, run_import
-from albfetcharr.lidarr.library_map import validate_library_map
+from albfetcharr.lidarr.library_map import parse_library_map_str, validate_library_map
 from albfetcharr.settings.resolver import resolve_app_config
 from albfetcharr.sources import Match, bootstrap_default_providers, get_provider
 
@@ -56,7 +56,7 @@ def cmd_wanted(args):
         sys.exit(1)
 
     root_folders = get_root_folders(lidarr_cfg.base_url, lidarr_cfg.api_key)
-    validate_library_map(root_folders)
+    validate_library_map(root_folders, parse_library_map_str(cfg.lidarr.library_map))
 
     albums = get_wanted_albums(lidarr_cfg.base_url, lidarr_cfg.api_key)
 
@@ -173,6 +173,7 @@ def cmd_wanted(args):
                     }
                     for item in ready_for_import
                 ],
+                library_map=parse_library_map_str(cfg.lidarr.library_map),
             )
 
 

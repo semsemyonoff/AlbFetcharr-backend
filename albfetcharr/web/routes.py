@@ -22,6 +22,7 @@ from albfetcharr.lidarr.client import (
     get_wanted_albums,
 )
 from albfetcharr.lidarr.importer import post_import_cleanup, run_import
+from albfetcharr.lidarr.library_map import parse_library_map_str
 from albfetcharr.settings.resolver import resolve_app_config
 from albfetcharr.sources import all_providers, get_provider
 from albfetcharr.sources.base import Match
@@ -556,6 +557,7 @@ def register_routes(app: Flask):
                             cfg.base_url,
                             cfg.api_key,
                             downloaded,
+                            library_map=parse_library_map_str(app_cfg.lidarr.library_map),
                             log=log,
                         )
                         log("  Cleanup done.")

@@ -1,62 +1,53 @@
 """Tests for library_map module."""
 
 from albfetcharr.lidarr.library_map import (
-    parse_library_map,
+    parse_library_map_str,
     resolve_library_path,
     validate_library_map,
 )
 
 
-class TestParseLibraryMap:
-    def test_empty_env_var(self, monkeypatch):
-        """Empty or missing env var returns empty dict."""
-        monkeypatch.delenv("ALBFETCHARR_LIBRARY_MAP", raising=False)
-        assert parse_library_map() == {}
+class TestParseLibraryMapStr:
+    def test_none_input_returns_empty(self):
+        """None input returns empty dict."""
+        assert parse_library_map_str(None) == {}
 
-    def test_single_pair(self, monkeypatch):
+    def test_empty_string_returns_empty(self):
+        """Empty string returns empty dict."""
+        assert parse_library_map_str("") == {}
+
+    def test_single_pair(self):
         """Parse a single mapping pair."""
-        monkeypatch.setenv("ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr=/mnt/albfetcharr")
-        assert parse_library_map() == {"/mnt/lidarr": "/mnt/albfetcharr"}
+        assert parse_library_map_str("/mnt/lidarr=/mnt/albfetcharr") == {
+            "/mnt/lidarr": "/mnt/albfetcharr"
+        }
 
-    def test_multiple_pairs(self, monkeypatch):
+    def test_multiple_pairs(self):
         """Parse multiple comma-separated pairs."""
-        monkeypatch.setenv(
-            "ALBFETCHARR_LIBRARY_MAP",
-            "/mnt/lidarr=/mnt/albfetcharr,/data/music=/mnt/music",
-        )
-        result = parse_library_map()
+        result = parse_library_map_str("/mnt/lidarr=/mnt/albfetcharr,/data/music=/mnt/music")
         assert result == {
             "/mnt/lidarr": "/mnt/albfetcharr",
             "/data/music": "/mnt/music",
         }
 
-    def test_trailing_slashes_removed(self, monkeypatch):
+    def test_trailing_slashes_removed(self):
         """Trailing slashes are normalized away."""
-        monkeypatch.setenv("ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr/=/mnt/albfetcharr/")
-        result = parse_library_map()
+        result = parse_library_map_str("/mnt/lidarr/=/mnt/albfetcharr/")
         assert result == {"/mnt/lidarr": "/mnt/albfetcharr"}
 
-    def test_whitespace_around_pairs(self, monkeypatch):
+    def test_whitespace_around_pairs(self):
         """Whitespace around pairs is stripped."""
-        monkeypatch.setenv(
-            "ALBFETCHARR_LIBRARY_MAP",
-            "  /mnt/lidarr=/mnt/albfetcharr  ,  /data/music=/mnt/music  ",
+        result = parse_library_map_str(
+            "  /mnt/lidarr=/mnt/albfetcharr  ,  /data/music=/mnt/music  "
         )
-        result = parse_library_map()
         assert result == {
             "/mnt/lidarr": "/mnt/albfetcharr",
             "/data/music": "/mnt/music",
         }
 
-    def test_custom_env_var_name(self, monkeypatch):
-        """Parse from a custom env var name."""
-        monkeypatch.setenv("CUSTOM_MAP", "/mnt/lidarr=/mnt/albfetcharr")
-        assert parse_library_map("CUSTOM_MAP") == {"/mnt/lidarr": "/mnt/albfetcharr"}
-
-    def test_ignores_malformed_pairs(self, monkeypatch):
+    def test_ignores_malformed_pairs(self):
         """Pairs without '=' are silently ignored."""
-        monkeypatch.setenv("ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr=/mnt/albfetcharr,invalid_pair")
-        result = parse_library_map()
+        result = parse_library_map_str("/mnt/lidarr=/mnt/albfetcharr,invalid_pair")
         assert result == {"/mnt/lidarr": "/mnt/albfetcharr"}
 
 
@@ -66,10 +57,14 @@ class TestResolveLibraryPath:
         path = "/data/library/artist/album"
         assert resolve_library_path(path, {}) == path
 
-    def test_no_env_mapping_returns_original(self, monkeypatch):
-        """No env var mapping returns original path."""
-        monkeypatch.delenv("ALBFETCHARR_LIBRARY_MAP", raising=False)
+    def test_none_mapping_returns_original(self):
+        """None mapping returns original path (does not read env)."""
         assert resolve_library_path("/data/library/artist/album") == "/data/library/artist/album"
+
+    def test_none_mapping_ignores_env(self, monkeypatch):
+        """None mapping returns identity even when env var is set (env read removed)."""
+        monkeypatch.setenv("ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr=/mnt/albfetcharr")
+        assert resolve_library_path("/mnt/lidarr/artist") == "/mnt/lidarr/artist"
 
     def test_exact_prefix_match(self):
         """Exact prefix match in the path."""
@@ -105,12 +100,6 @@ class TestResolveLibraryPath:
         result = resolve_library_path("/mnt/lidarr/artist", mapping)
         assert result == "/mnt/lidarr/artist"  # /mnt/lid does not match /mnt/lidarr
 
-    def test_fetches_from_env_if_mapping_not_provided(self, monkeypatch):
-        """If mapping is None, fetch from env."""
-        monkeypatch.setenv("ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr=/mnt/albfetcharr")
-        result = resolve_library_path("/mnt/lidarr/artist")
-        assert result == "/mnt/albfetcharr/artist"
-
     def test_trailing_slashes_in_paths_ignored(self):
         """Trailing slashes in mapping don't affect matching."""
         mapping = {"/mnt/lidarr": "/mnt/albfetcharr"}
@@ -119,11 +108,29 @@ class TestResolveLibraryPath:
 
 
 class TestValidateLibraryMap:
-    def test_empty_mapping_no_warning(self, monkeypatch, capsys):
-        """Empty mapping produces no warnings."""
-        monkeypatch.delenv("ALBFETCHARR_LIBRARY_MAP", raising=False)
+    def test_none_mapping_no_warning(self, caplog):
+        """None mapping produces no warnings (env read removed)."""
+        import logging
+
         root_folders = [{"path": "/mnt/lidarr"}]
-        validate_library_map(root_folders)
+        with caplog.at_level(logging.WARNING, logger="albfetcharr"):
+            validate_library_map(root_folders)
+        assert caplog.records == []
+
+    def test_none_mapping_ignores_env(self, monkeypatch, caplog):
+        """None mapping skips validation even when env var is set."""
+        import logging
+
+        monkeypatch.setenv("ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr=/mnt/albfetcharr")
+        root_folders = [{"path": "/data/music"}]
+        with caplog.at_level(logging.WARNING, logger="albfetcharr"):
+            validate_library_map(root_folders)
+        assert caplog.records == []
+
+    def test_empty_mapping_no_warning(self, capsys):
+        """Empty mapping produces no warnings."""
+        root_folders = [{"path": "/mnt/lidarr"}]
+        validate_library_map(root_folders, {})
         assert capsys.readouterr().err == ""
 
     def test_empty_root_folders_no_warning(self, capsys):
@@ -204,14 +211,3 @@ class TestValidateLibraryMap:
         warnings = [r for r in caplog.records if r.levelname == "WARNING"]
         assert any("/data/music" in r.message for r in warnings)
         assert len(warnings) == 1  # only one warning
-
-    def test_fetches_from_env_if_mapping_not_provided(self, monkeypatch, caplog):
-        """If mapping is None, fetch from env."""
-        import logging
-
-        monkeypatch.setenv("ALBFETCHARR_LIBRARY_MAP", "/mnt/lidarr=/mnt/albfetcharr")
-        root_folders = [{"path": "/data/music"}]
-        with caplog.at_level(logging.WARNING, logger="albfetcharr"):
-            validate_library_map(root_folders)
-        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-        assert any("/data/music" in r.message for r in warnings)

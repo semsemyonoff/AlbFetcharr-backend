@@ -67,8 +67,8 @@ def _build_ytmusic_client(opts: YtDlpOptions) -> YTMusic:
         logger.warning("Could not read YTMusic OAuth file %s: %s; using anonymous search", path, e)
         return YTMusic()
 
-    client_id = data.get("client_id") or os.environ.get("ALBFETCHARR_YTMUSIC_CLIENT_ID")
-    client_secret = data.get("client_secret") or os.environ.get("ALBFETCHARR_YTMUSIC_CLIENT_SECRET")
+    client_id = data.get("client_id") or opts.ytmusic_client_id
+    client_secret = data.get("client_secret") or opts.ytmusic_client_secret
     token = {k: data[k] for k in _OAUTH_TOKEN_KEYS if k in data}
 
     try:

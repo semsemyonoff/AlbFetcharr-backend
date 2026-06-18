@@ -1,7 +1,6 @@
-"""Centralized environment variable loading for AlbFetcharr."""
+"""AlbFetcharr configuration dataclasses and env-var parsing helpers."""
 
 import logging
-import os
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("albfetcharr")
@@ -105,83 +104,3 @@ def _parse_bool(value: str | None) -> bool:
     if value is None:
         return False
     return value.lower() in ("1", "true", "yes")
-
-
-def load_yandex_options() -> YandexOptions:
-    """Load Yandex Music provider options from environment variables."""
-    return YandexOptions(
-        quality=os.environ.get("YANDEX_MUSIC_QUALITY", "2"),
-        lyrics_format=os.environ.get("ALBFETCHARR_LYRICS_FORMAT", "lrc"),
-        cover_resolution=os.environ.get("ALBFETCHARR_COVER_RESOLUTION", "400"),
-        embed_cover=_parse_bool(os.environ.get("ALBFETCHARR_EMBED_COVER", "0")),
-        skip_existing=_parse_bool(os.environ.get("ALBFETCHARR_SKIP_EXISTING", "1")),
-        delay=os.environ.get("ALBFETCHARR_DELAY", "0"),
-        compat_level=os.environ.get("ALBFETCHARR_COMPAT_LEVEL", "1"),
-        timeout=os.environ.get("ALBFETCHARR_YANDEX_TIMEOUT", "20"),
-        tries=os.environ.get("ALBFETCHARR_YANDEX_TRIES", "20"),
-        retry_delay=os.environ.get("ALBFETCHARR_YANDEX_RETRY_DELAY", "5"),
-        stick_to_artist=_parse_bool(os.environ.get("ALBFETCHARR_STICK_TO_ARTIST", "0")),
-        only_music=_parse_bool(os.environ.get("ALBFETCHARR_ONLY_MUSIC", "0")),
-        unsafe_path=_parse_bool(os.environ.get("ALBFETCHARR_UNSAFE_PATH", "0")),
-        path_pattern=os.environ.get("ALBFETCHARR_YANDEX_PATH_PATTERN") or None,
-        download_dir=os.environ.get("DOWNLOAD_DIR", "/downloads"),
-        clear_comments=_parse_bool(os.environ.get("ALBFETCHARR_CLEAR_COMMENTS", "0")),
-    )
-
-
-def load_ytdlp_options() -> YtDlpOptions:
-    """Load yt-dlp provider options from environment variables."""
-    return YtDlpOptions(
-        download_dir=os.environ.get("DOWNLOAD_DIR", "/downloads"),
-        audio_format=os.environ.get("ALBFETCHARR_YTDLP_FORMAT", "flac"),
-        audio_quality=_parse_int(os.environ.get("ALBFETCHARR_YTDLP_QUALITY"), default=192),
-        path_pattern=(
-            os.environ.get("ALBFETCHARR_YTDLP_PATH_PATTERN")
-            or "%(artist)s/%(album)s/%(track_number)02d - %(title)s.%(ext)s"
-        ),
-        cookies_file=os.environ.get("ALBFETCHARR_YTDLP_COOKIES") or None,
-        download_retries=max(1, _parse_int(os.environ.get("ALBFETCHARR_YTDLP_RETRIES"), default=3)),
-        ytmusic_oauth_file=(
-            os.environ.get("ALBFETCHARR_YTMUSIC_OAUTH") or DEFAULT_YTMUSIC_OAUTH_FILE
-        ),
-        ytmusic_client_id=os.environ.get("ALBFETCHARR_YTMUSIC_CLIENT_ID") or None,
-        ytmusic_client_secret=os.environ.get("ALBFETCHARR_YTMUSIC_CLIENT_SECRET") or None,
-    )
-
-
-def load_lidarr_config() -> LidarrConfig:
-    """Load Lidarr configuration from environment variables."""
-    return LidarrConfig(
-        base_url=os.environ.get("LIDARR_URL", "").rstrip("/"),
-        api_key=os.environ.get("LIDARR_API_KEY", ""),
-        import_path=os.environ.get("ALBFETCHARR_LIDARR_IMPORT_PATH", ""),
-        library_map=os.environ.get("ALBFETCHARR_LIBRARY_MAP"),
-    )
-
-
-def load_ui_defaults() -> UIDefaults:
-    """Load UI default settings from environment variables."""
-    language = os.environ.get("ALBFETCHARR_DEFAULT_LANG", "en")
-    if language not in ("en", "ru"):
-        logger.warning(f"Invalid ALBFETCHARR_DEFAULT_LANG={language!r}, falling back to 'en'")
-        language = "en"
-
-    theme = os.environ.get("ALBFETCHARR_DEFAULT_THEME", "system")
-    if theme not in ("system", "light", "dark"):
-        logger.warning(f"Invalid ALBFETCHARR_DEFAULT_THEME={theme!r}, falling back to 'system'")
-        theme = "system"
-
-    return UIDefaults(language=language, theme=theme)
-
-
-def load_app_config() -> AppConfig:
-    """Load all app configuration from environment variables."""
-    return AppConfig(
-        lidarr=load_lidarr_config(),
-        yandex_token=os.environ.get("YANDEX_MUSIC_TOKEN"),
-        yandex_options=load_yandex_options(),
-        ytdlp_options=load_ytdlp_options(),
-        enable_yandex=_parse_bool(os.environ.get("ALBFETCHARR_ENABLE_YANDEX", "1")),
-        enable_youtube_music=_parse_bool(os.environ.get("ALBFETCHARR_ENABLE_YOUTUBE_MUSIC", "1")),
-        enable_soundcloud=_parse_bool(os.environ.get("ALBFETCHARR_ENABLE_SOUNDCLOUD", "1")),
-    )

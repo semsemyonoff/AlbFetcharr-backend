@@ -382,3 +382,142 @@ class TestResolveAppConfigSecretFromDb:
         set_raw("yandex_token", "notreal", is_secret=True, db_path=tmp_db)
         cfg = resolve_app_config()
         assert cfg.yandex_token == "envtoken"
+
+
+# ---------------------------------------------------------------------------
+# Re-homed Task-1 tests: enable_* / new-field / env-rename assertions
+# (Previously targeted load_* functions; now verify via resolve_app_config)
+# ---------------------------------------------------------------------------
+
+
+class TestEnableToggles:
+    """enable_* fields resolved correctly from env (re-homed from test_config.py)."""
+
+    def test_enable_yandex_default_true(self, tmp_db, clean_env):
+        assert resolve_app_config().enable_yandex is True
+
+    def test_enable_youtube_music_default_true(self, tmp_db, clean_env):
+        assert resolve_app_config().enable_youtube_music is True
+
+    def test_enable_soundcloud_default_true(self, tmp_db, clean_env):
+        assert resolve_app_config().enable_soundcloud is True
+
+    def test_enable_yandex_zero_is_false(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_ENABLE_YANDEX", "0")
+        assert resolve_app_config().enable_yandex is False
+
+    def test_enable_youtube_music_zero_is_false(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_ENABLE_YOUTUBE_MUSIC", "0")
+        assert resolve_app_config().enable_youtube_music is False
+
+    def test_enable_soundcloud_zero_is_false(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_ENABLE_SOUNDCLOUD", "0")
+        assert resolve_app_config().enable_soundcloud is False
+
+    def test_enable_yandex_false_string_is_false(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_ENABLE_YANDEX", "false")
+        assert resolve_app_config().enable_yandex is False
+
+    def test_enable_youtube_music_false_string_is_false(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_ENABLE_YOUTUBE_MUSIC", "false")
+        assert resolve_app_config().enable_youtube_music is False
+
+    def test_enable_soundcloud_no_string_is_false(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_ENABLE_SOUNDCLOUD", "no")
+        assert resolve_app_config().enable_soundcloud is False
+
+    def test_enable_yandex_true_string_is_true(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_ENABLE_YANDEX", "true")
+        assert resolve_app_config().enable_yandex is True
+
+    def test_enable_youtube_music_yes_string_is_true(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_ENABLE_YOUTUBE_MUSIC", "yes")
+        assert resolve_app_config().enable_youtube_music is True
+
+    def test_enable_soundcloud_one_string_is_true(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_ENABLE_SOUNDCLOUD", "1")
+        assert resolve_app_config().enable_soundcloud is True
+
+
+class TestEnvRenames:
+    """Renamed env vars are honored (re-homed from test_config.py)."""
+
+    def test_yandex_path_pattern_new_env(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_YANDEX_PATH_PATTERN", "#artist/#album")
+        assert resolve_app_config().yandex_options.path_pattern == "#artist/#album"
+
+    def test_yandex_path_pattern_absent_is_none(self, tmp_db, clean_env):
+        assert resolve_app_config().yandex_options.path_pattern is None
+
+    def test_yandex_path_pattern_old_env_ignored(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_PATH_PATTERN", "#old-pattern")
+        assert resolve_app_config().yandex_options.path_pattern is None
+
+    def test_yandex_timeout_renamed_env(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_YANDEX_TIMEOUT", "30")
+        assert resolve_app_config().yandex_options.timeout == "30"
+
+    def test_yandex_tries_renamed_env(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_YANDEX_TRIES", "10")
+        assert resolve_app_config().yandex_options.tries == "10"
+
+    def test_yandex_retry_delay_renamed_env(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_YANDEX_RETRY_DELAY", "3")
+        assert resolve_app_config().yandex_options.retry_delay == "3"
+
+    def test_yandex_old_timeout_ignored(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_TIMEOUT", "99")
+        assert resolve_app_config().yandex_options.timeout == "20"  # default
+
+
+class TestNewFields:
+    """New fields (ytmusic creds, path_pattern) populated via resolved config."""
+
+    def test_ytmusic_client_id_from_env(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_YTMUSIC_CLIENT_ID", "my-client-id")
+        assert resolve_app_config().ytdlp_options.ytmusic_client_id == "my-client-id"
+
+    def test_ytmusic_client_secret_from_env(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_YTMUSIC_CLIENT_SECRET", "my-secret")
+        assert resolve_app_config().ytdlp_options.ytmusic_client_secret == "my-secret"
+
+    def test_ytmusic_client_id_absent_is_none(self, tmp_db, clean_env):
+        assert resolve_app_config().ytdlp_options.ytmusic_client_id is None
+
+    def test_ytmusic_client_secret_absent_is_none(self, tmp_db, clean_env):
+        assert resolve_app_config().ytdlp_options.ytmusic_client_secret is None
+
+    def test_ytdlp_path_pattern_from_env(self, tmp_db, clean_env, monkeypatch):
+        custom = "%(album)s/%(title)s.%(ext)s"
+        monkeypatch.setenv("ALBFETCHARR_YTDLP_PATH_PATTERN", custom)
+        assert resolve_app_config().ytdlp_options.path_pattern == custom
+
+    def test_ytdlp_path_pattern_default_has_artist(self, tmp_db, clean_env):
+        assert "%(artist)s" in resolve_app_config().ytdlp_options.path_pattern
+
+    def test_ui_lang_from_env(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_DEFAULT_LANG", "ru")
+        assert resolve_app_config().ui_defaults.language == "ru"
+
+    def test_ui_theme_from_env(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_DEFAULT_THEME", "dark")
+        assert resolve_app_config().ui_defaults.theme == "dark"
+
+
+class TestParseLibraryMapStrIntegration:
+    """parse_library_map_str round-trips; callers thread it through correctly."""
+
+    def test_round_trip(self, tmp_db, clean_env, monkeypatch):
+        from albfetcharr.lidarr.library_map import parse_library_map_str
+
+        monkeypatch.setenv("ALBFETCHARR_LIBRARY_MAP", "/a=/b,/c=/d")
+        cfg = resolve_app_config()
+        parsed = parse_library_map_str(cfg.lidarr.library_map)
+        assert parsed == {"/a": "/b", "/c": "/d"}
+
+    def test_none_library_map_parses_to_empty(self, tmp_db, clean_env):
+        from albfetcharr.lidarr.library_map import parse_library_map_str
+
+        cfg = resolve_app_config()
+        assert cfg.lidarr.library_map is None
+        assert parse_library_map_str(cfg.lidarr.library_map) == {}
