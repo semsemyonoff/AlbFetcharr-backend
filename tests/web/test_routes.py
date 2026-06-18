@@ -167,6 +167,28 @@ def test_api_config_returns_ui_defaults(client):
 
 
 @pytest.mark.usefixtures("_clean_registry")
+def test_api_config_encryption_disabled(client, monkeypatch):
+    """encryption_enabled is false when ALBFETCHARR_SECRET_KEY is unset."""
+    monkeypatch.delenv("ALBFETCHARR_SECRET_KEY", raising=False)
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["encryption_enabled"] is False
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_api_config_encryption_enabled(client, monkeypatch):
+    """encryption_enabled is true when ALBFETCHARR_SECRET_KEY holds a valid Fernet key."""
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("ALBFETCHARR_SECRET_KEY", Fernet.generate_key().decode())
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["encryption_enabled"] is True
+
+
+@pytest.mark.usefixtures("_clean_registry")
 def test_api_sources(client):
     """Test /api/sources endpoint returns registered providers."""
     response = client.get("/api/sources")
@@ -501,22 +523,25 @@ def test_api_download_passes_lidarr_names_to_provider():
         ]
     }
 
-    with patch.dict(
-        "os.environ",
-        {
-            "LIDARR_URL": "http://lidarr.test",
-            "LIDARR_API_KEY": "test_key",
-            "DOWNLOAD_DIR": "/downloads",
-        },
-    ):
-        response = test_client.post(
-            "/api/download",
-            data=json.dumps(payload),
-            content_type="application/json",
-        )
-        assert response.status_code == 202
-        # Reading the SSE stream blocks until the background download completes.
-        test_client.get("/api/download/stream").get_data(as_text=True)
+    # Force per-run providers empty so the global registry CapturingProvider is used.
+    # This test checks the Match construction, not the per-run vs registry selection.
+    with patch("albfetcharr.web.routes._build_per_run_providers", return_value={}):
+        with patch.dict(
+            "os.environ",
+            {
+                "LIDARR_URL": "http://lidarr.test",
+                "LIDARR_API_KEY": "test_key",
+                "DOWNLOAD_DIR": "/downloads",
+            },
+        ):
+            response = test_client.post(
+                "/api/download",
+                data=json.dumps(payload),
+                content_type="application/json",
+            )
+            assert response.status_code == 202
+            # Reading the SSE stream blocks until the background download completes.
+            test_client.get("/api/download/stream").get_data(as_text=True)
 
     with _stream_claim_lock:
         _stream_claim_state["claimed"] = False
@@ -1195,13 +1220,13 @@ def test_done_emitted_directly_when_import_path_unset(client):
         ]
     }
 
-    # Mock load_lidarr_config with empty import_path
-    with patch("albfetcharr.web.routes.load_lidarr_config") as mock_config:
-        mock_cfg = MagicMock()
-        mock_cfg.base_url = "http://lidarr.test"
-        mock_cfg.api_key = "test_key"
-        mock_cfg.import_path = ""
-        mock_config.return_value = mock_cfg
+    with patch("albfetcharr.web.routes.resolve_app_config") as mock_resolve:
+        mock_app_cfg = MagicMock()
+        mock_app_cfg.lidarr.base_url = "http://lidarr.test"
+        mock_app_cfg.lidarr.api_key = "test_key"
+        mock_app_cfg.lidarr.import_path = ""
+        mock_app_cfg.yandex_options.clear_comments = False
+        mock_resolve.return_value = mock_app_cfg
 
         with patch.dict(
             "os.environ",
@@ -1446,12 +1471,13 @@ def test_partial_album_marked_downloaded_not_failed(client):
         ]
     }
     # Import disabled so the terminal state is the downloaded/partial event.
-    with patch("albfetcharr.web.routes.load_lidarr_config") as mock_config:
-        mock_cfg = MagicMock()
-        mock_cfg.base_url = "http://lidarr.test"
-        mock_cfg.api_key = "test_key"
-        mock_cfg.import_path = ""
-        mock_config.return_value = mock_cfg
+    with patch("albfetcharr.web.routes.resolve_app_config") as mock_resolve:
+        mock_app_cfg = MagicMock()
+        mock_app_cfg.lidarr.base_url = "http://lidarr.test"
+        mock_app_cfg.lidarr.api_key = "test_key"
+        mock_app_cfg.lidarr.import_path = ""
+        mock_app_cfg.yandex_options.clear_comments = False
+        mock_resolve.return_value = mock_app_cfg
         events = _collect_stream_events(test_client, payload)
 
     progress_events = [e["progress"] for e in events if "progress" in e]
@@ -1495,3 +1521,340 @@ def test_index_returns_helpful_error_when_dist_missing(client):
         msg = response.get_data(as_text=True)
         assert "Frontend not built" in msg
         assert "npm run build" in msg
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_api_config_uses_resolve_app_config(client):
+    """Test /api/config reads all four fields from resolve_app_config, not load_* helpers."""
+    with patch("albfetcharr.web.routes.resolve_app_config") as mock_resolve:
+        mock_cfg = MagicMock()
+        mock_cfg.yandex_options.quality = "1"
+        mock_cfg.ui_defaults.language = "ru"
+        mock_cfg.ui_defaults.theme = "dark"
+        mock_cfg.lidarr.import_path = "/import"
+        mock_resolve.return_value = mock_cfg
+
+        response = client.get("/api/config")
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["default_quality"] == 1
+    assert data["default_lang"] == "ru"
+    assert data["default_theme"] == "dark"
+    assert data["import_enabled"] is True
+
+
+@pytest.mark.usefixtures("_clean_registry")
+@responses.activate
+def test_api_wanted_uses_resolved_lidarr_config(client):
+    """Test /api/wanted resolves lidarr config via resolve_app_config."""
+    responses.add(
+        responses.GET,
+        "http://lidarr.resolved/api/v1/wanted/missing",
+        json={"records": [], "totalRecords": 0},
+        status=200,
+    )
+    responses.add(
+        responses.GET,
+        "http://lidarr.resolved/api/v1/rootfolder",
+        json=[],
+        status=200,
+    )
+    responses.add(
+        responses.GET,
+        "http://lidarr.resolved/api/v1/artist",
+        json=[],
+        status=200,
+    )
+
+    with patch("albfetcharr.web.routes.resolve_app_config") as mock_resolve:
+        mock_cfg = MagicMock()
+        mock_cfg.lidarr.base_url = "http://lidarr.resolved"
+        mock_cfg.lidarr.api_key = "resolved_key"
+        mock_resolve.return_value = mock_cfg
+
+        with patch.dict("os.environ", {"DOWNLOAD_DIR": "/downloads"}):
+            response = client.get("/api/wanted")
+
+    assert response.status_code == 200
+    assert isinstance(response.get_json(), list)
+
+
+# ── Task 11: Session overrides behavioral tests ───────────────────────────────
+
+
+def _wait_for_lock(timeout=5.0):
+    """Acquire and release download_lock to wait for the background thread."""
+    from albfetcharr.web.routes import download_lock
+
+    acquired = download_lock.acquire(timeout=timeout)
+    if acquired:
+        download_lock.release()
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_overrides_clear_comments_enabled_via_override():
+    """yandex_clear_comments=1 in overrides triggers comment stripping even when env is 0."""
+
+    class SuccessYandex(SourceProvider):
+        id = "yandex"
+        name = "Yandex Music"
+
+        def search(self, artist, album, limit=5):
+            return []
+
+        def download(self, match, *, quality=None, log=None, on_progress=None):
+            if log:
+                log("ok")
+            return True
+
+    clear_registry()
+    register(SuccessYandex())
+    test_client = make_test_app().test_client()
+    test_client.post("/api/download/stream/claim")
+
+    payload = {
+        "items": [
+            {
+                "source": "yandex",
+                "artist": "A",
+                "title": "B",
+                "match_url": "http://x",
+                "album_id": 1,
+            }
+        ],
+        "overrides": {"yandex_clear_comments": "1"},
+    }
+
+    # Force per-run dict empty so the global registry SuccessYandex is used.
+    # (Prevents a container-level YANDEX_MUSIC_TOKEN from causing per-run to
+    # construct a real YandexMusicProvider that would bypass the test fake.)
+    with patch("albfetcharr.web.routes._build_per_run_providers", return_value={}):
+        with patch.dict("os.environ", {"DOWNLOAD_DIR": "/fake", "ALBFETCHARR_CLEAR_COMMENTS": "0"}):
+            with patch("albfetcharr.web.routes.clear_comments") as mock_cc:
+                with patch("albfetcharr.web.routes.find_album_dir", return_value="/fake/A/B"):
+                    test_client.post(
+                        "/api/download",
+                        data=json.dumps(payload),
+                        content_type="application/json",
+                    )
+                    test_client.get("/api/download/stream").get_data(as_text=True)
+
+    mock_cc.assert_called_once()
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_overrides_clear_comments_disabled_via_override():
+    """yandex_clear_comments=0 in overrides suppresses stripping even when env is 1."""
+
+    class SuccessYandex(SourceProvider):
+        id = "yandex"
+        name = "Yandex Music"
+
+        def search(self, artist, album, limit=5):
+            return []
+
+        def download(self, match, *, quality=None, log=None, on_progress=None):
+            if log:
+                log("ok")
+            return True
+
+    clear_registry()
+    register(SuccessYandex())
+    test_client = make_test_app().test_client()
+    test_client.post("/api/download/stream/claim")
+
+    payload = {
+        "items": [
+            {
+                "source": "yandex",
+                "artist": "A",
+                "title": "B",
+                "match_url": "http://x",
+                "album_id": 1,
+            }
+        ],
+        "overrides": {"yandex_clear_comments": "0"},
+    }
+
+    with patch("albfetcharr.web.routes._build_per_run_providers", return_value={}):
+        with patch.dict("os.environ", {"DOWNLOAD_DIR": "/fake", "ALBFETCHARR_CLEAR_COMMENTS": "1"}):
+            with patch("albfetcharr.web.routes.clear_comments") as mock_cc:
+                with patch("albfetcharr.web.routes.find_album_dir", return_value="/fake/A/B"):
+                    test_client.post(
+                        "/api/download",
+                        data=json.dumps(payload),
+                        content_type="application/json",
+                    )
+                    test_client.get("/api/download/stream").get_data(as_text=True)
+
+    mock_cc.assert_not_called()
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_overrides_quality_override_beats_default():
+    """yandex_quality override changes the quality arg passed to the provider."""
+    received = {}
+
+    class QualityProvider(SourceProvider):
+        id = "yandex"
+        name = "Yandex Music"
+
+        def search(self, artist, album, limit=5):
+            return []
+
+        def download(self, match, *, quality=None, log=None, on_progress=None):
+            received["quality"] = quality
+            if log:
+                log("ok")
+            return True
+
+    clear_registry()
+    register(QualityProvider())
+    test_client = make_test_app().test_client()
+    test_client.post("/api/download/stream/claim")
+
+    payload = {
+        "items": [
+            {
+                "source": "yandex",
+                "artist": "A",
+                "title": "B",
+                "match_url": "http://x",
+                "album_id": 1,
+            }
+        ],
+        "overrides": {"yandex_quality": "0"},
+    }
+
+    # Force per-run dict empty so the global registry QualityProvider is used.
+    with patch("albfetcharr.web.routes._build_per_run_providers", return_value={}):
+        with patch.dict("os.environ", {"DOWNLOAD_DIR": "/fake"}):
+            test_client.post(
+                "/api/download",
+                data=json.dumps(payload),
+                content_type="application/json",
+            )
+            test_client.get("/api/download/stream").get_data(as_text=True)
+
+    assert received.get("quality") == "0", f"expected '0', got {received.get('quality')!r}"
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_overrides_quality_per_item_beats_override():
+    """Per-item quality wins over the session override yandex_quality."""
+    received = {}
+
+    class QualityProvider(SourceProvider):
+        id = "yandex"
+        name = "Yandex Music"
+
+        def search(self, artist, album, limit=5):
+            return []
+
+        def download(self, match, *, quality=None, log=None, on_progress=None):
+            received["quality"] = quality
+            if log:
+                log("ok")
+            return True
+
+    clear_registry()
+    register(QualityProvider())
+    test_client = make_test_app().test_client()
+    test_client.post("/api/download/stream/claim")
+
+    payload = {
+        "items": [
+            {
+                "source": "yandex",
+                "artist": "A",
+                "title": "B",
+                "match_url": "http://x",
+                "album_id": 1,
+                "quality": 1,  # per-item quality "1"
+            }
+        ],
+        "overrides": {"yandex_quality": "0"},  # override says "0"
+    }
+
+    # Force per-run dict empty so the global registry QualityProvider is used.
+    with patch("albfetcharr.web.routes._build_per_run_providers", return_value={}):
+        with patch.dict("os.environ", {"DOWNLOAD_DIR": "/fake"}):
+            test_client.post(
+                "/api/download",
+                data=json.dumps(payload),
+                content_type="application/json",
+            )
+            test_client.get("/api/download/stream").get_data(as_text=True)
+
+    # Per-item quality "1" must win over the "0" override.
+    assert received.get("quality") == "1", f"expected '1', got {received.get('quality')!r}"
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_overrides_ytdlp_format_bakes_into_per_run_provider():
+    """ytdlp_format override is baked into the per-run YouTubeMusicProvider._opts."""
+    captured_opts = {}
+
+    class CapturingYtProvider:
+        """Stands in for YouTubeMusicProvider; captures constructor opts."""
+
+        def __init__(self, opts):
+            captured_opts["opts"] = opts
+
+        def download(self, match, *, quality=None, log=None, on_progress=None):
+            if log:
+                log("ok")
+            return True
+
+        @property
+        def name(self):
+            return "YouTube Music"
+
+        streams_progress = False
+
+    class FakeYtRegistry(SourceProvider):
+        """Registered in global registry so pre-flight get_provider check passes."""
+
+        id = "youtube_music"
+        name = "YouTube Music"
+
+        def search(self, artist, album, limit=5):
+            return []
+
+        def download(self, match, *, quality=None, log=None, on_progress=None):
+            return True
+
+    clear_registry()
+    register(FakeYtRegistry())
+    test_client = make_test_app().test_client()
+    test_client.post("/api/download/stream/claim")
+
+    payload = {
+        "items": [
+            {
+                "source": "youtube_music",
+                "artist": "A",
+                "title": "B",
+                "match_url": "http://x",
+                "album_id": 1,
+            }
+        ],
+        "overrides": {"ytdlp_format": "mp3"},
+    }
+
+    # Patch YouTubeMusicProvider so the per-run construction uses CapturingYtProvider.
+    with patch("albfetcharr.sources.youtube_music.YouTubeMusicProvider", CapturingYtProvider):
+        with patch.dict("os.environ", {"DOWNLOAD_DIR": "/fake"}):
+            test_client.post(
+                "/api/download",
+                data=json.dumps(payload),
+                content_type="application/json",
+            )
+            test_client.get("/api/download/stream").get_data(as_text=True)
+
+    opts = captured_opts.get("opts")
+    assert opts is not None, (
+        "YouTubeMusicProvider was not constructed (per-run construction missing)"
+    )
+    assert opts.audio_format == "mp3", f"expected 'mp3', got {opts.audio_format!r}"

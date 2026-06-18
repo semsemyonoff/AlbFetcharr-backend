@@ -217,7 +217,8 @@ def test_download_valid_items_accepted(client):
     assert resp.status_code == 202
     assert resp.get_json()["status"] == "started"
     # Wait for the background thread to release the lock before the next test.
-    acquired = download_lock.acquire(timeout=5.0)
+    # 15s: the first run imports yt-dlp/ytmusicapi modules lazily (~5–10s cold).
+    acquired = download_lock.acquire(timeout=15.0)
     if acquired:
         download_lock.release()
 
@@ -253,6 +254,192 @@ def test_download_quality_string_accepted(client):
         )
     assert resp.status_code == 202
     # Wait for the background thread to release the lock before the next test.
-    acquired = download_lock.acquire(timeout=5.0)
+    acquired = download_lock.acquire(timeout=15.0)
+    if acquired:
+        download_lock.release()
+
+
+# --- /api/download overrides validation tests ---
+
+
+def test_download_overrides_non_session_key_rejected(client):
+    """overrides containing a global-only key (lidarr_url) is rejected → 422."""
+    resp = client.post(
+        "/api/download",
+        data=json.dumps(
+            {
+                "items": [
+                    {
+                        "source": "fake",
+                        "artist": "A",
+                        "title": "B",
+                        "match_url": "http://x",
+                        "album_id": 1,
+                    }
+                ],
+                "overrides": {"lidarr_url": "http://evil"},
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 422
+
+
+def test_download_overrides_unknown_key_rejected(client):
+    """overrides containing an unknown/Tier-5 key is rejected → 422."""
+    resp = client.post(
+        "/api/download",
+        data=json.dumps(
+            {
+                "items": [
+                    {
+                        "source": "fake",
+                        "artist": "A",
+                        "title": "B",
+                        "match_url": "http://x",
+                        "album_id": 1,
+                    }
+                ],
+                "overrides": {"ALBFETCHARR_PORT": "8080"},
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 422
+
+
+def test_download_overrides_invalid_value_rejected(client):
+    """overrides with a valid session key but an invalid value is rejected → 422.
+
+    The resolver returns raw override strings unchanged, so an invalid value must
+    be caught at the request boundary (like PUT) rather than failing the download
+    asynchronously after a 202.
+    """
+    resp = client.post(
+        "/api/download",
+        data=json.dumps(
+            {
+                "items": [
+                    {
+                        "source": "fake",
+                        "artist": "A",
+                        "title": "B",
+                        "match_url": "http://x",
+                        "album_id": 1,
+                    }
+                ],
+                "overrides": {"ytdlp_format": "wma"},
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 422
+
+
+def test_download_overrides_invalid_int_value_rejected(client):
+    """overrides with an out-of-type value for an int session key → 422."""
+    resp = client.post(
+        "/api/download",
+        data=json.dumps(
+            {
+                "items": [
+                    {
+                        "source": "fake",
+                        "artist": "A",
+                        "title": "B",
+                        "match_url": "http://x",
+                        "album_id": 1,
+                    }
+                ],
+                "overrides": {"ytdlp_quality": "notanint"},
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 422
+
+
+def test_download_overrides_session_key_accepted(client):
+    """overrides with a valid Tier-3 session key is accepted → 202."""
+    from albfetcharr.web.routes import download_lock
+
+    with patch.dict("os.environ", {"DOWNLOAD_DIR": "/downloads"}):
+        resp = client.post(
+            "/api/download",
+            data=json.dumps(
+                {
+                    "items": [
+                        {
+                            "source": "fake",
+                            "artist": "A",
+                            "title": "B",
+                            "match_url": "http://x",
+                            "album_id": 1,
+                        }
+                    ],
+                    "overrides": {"ytdlp_format": "mp3"},
+                }
+            ),
+            content_type="application/json",
+        )
+    assert resp.status_code == 202
+    acquired = download_lock.acquire(timeout=15.0)
+    if acquired:
+        download_lock.release()
+
+
+def test_download_overrides_absent_returns_202(client):
+    """Omitting overrides entirely is backward-compatible → 202."""
+    from albfetcharr.web.routes import download_lock
+
+    with patch.dict("os.environ", {"DOWNLOAD_DIR": "/downloads"}):
+        resp = client.post(
+            "/api/download",
+            data=json.dumps(
+                {
+                    "items": [
+                        {
+                            "source": "fake",
+                            "artist": "A",
+                            "title": "B",
+                            "match_url": "http://x",
+                            "album_id": 1,
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+    assert resp.status_code == 202
+    acquired = download_lock.acquire(timeout=15.0)
+    if acquired:
+        download_lock.release()
+
+
+def test_download_overrides_empty_dict_accepted(client):
+    """Empty overrides dict is valid → 202."""
+    from albfetcharr.web.routes import download_lock
+
+    with patch.dict("os.environ", {"DOWNLOAD_DIR": "/downloads"}):
+        resp = client.post(
+            "/api/download",
+            data=json.dumps(
+                {
+                    "items": [
+                        {
+                            "source": "fake",
+                            "artist": "A",
+                            "title": "B",
+                            "match_url": "http://x",
+                            "album_id": 1,
+                        }
+                    ],
+                    "overrides": {},
+                }
+            ),
+            content_type="application/json",
+        )
+    assert resp.status_code == 202
+    acquired = download_lock.acquire(timeout=15.0)
     if acquired:
         download_lock.release()

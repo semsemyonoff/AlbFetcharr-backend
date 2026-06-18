@@ -202,8 +202,9 @@ AlbFetcharr поддерживает несколько источников д�
 | `ALBFETCHARR_STICK_TO_ARTIST` | `0` | Загружать альбомы только данного исполнителя (`0` / `1`) |
 | `ALBFETCHARR_ONLY_MUSIC` | `0` | Только музыка, без подкастов и аудиокниг (`0` / `1`) |
 | `ALBFETCHARR_COMPAT_LEVEL` | `1` | Уровень совместимости (`0` — `1`) |
-| `ALBFETCHARR_PATH_PATTERN` | — | Шаблон пути (`#album-artist/#album/#number - #title`) |
+| `ALBFETCHARR_YANDEX_PATH_PATTERN` | — | Шаблон пути для Яндекс Музыки (`#album-artist/#album/#number - #title`). Ранее `ALBFETCHARR_PATH_PATTERN` |
 | `ALBFETCHARR_UNSAFE_PATH` | `0` | Не очищать путь от недопустимых символов (`0` / `1`) |
+| `ALBFETCHARR_YTDLP_PATH_PATTERN` | `%(artist)s/%(album)s/%(track_number)02d - %(title)s.%(ext)s` | Шаблон пути для yt-dlp источников (YouTube Music, SoundCloud) |
 | `ALBFETCHARR_YTDLP_FORMAT` | `flac` | Формат аудио для yt-dlp источников: `flac`, `m4a`, `mp3` |
 | `ALBFETCHARR_YTDLP_QUALITY` | `192` | Битрейт для сжатых форматов (кбит/с), игнорируется для FLAC |
 | `ALBFETCHARR_YTDLP_COOKIES` | — | Путь (внутри контейнера) к Netscape `cookies.txt` для загрузки YouTube/SoundCloud за бот-гейтом. Опционально; если не задан или файл отсутствует — cookies не используются (см. [Cookies для YouTube](#cookies-для-youtube)) |
@@ -211,16 +212,34 @@ AlbFetcharr поддерживает несколько источников д�
 | `ALBFETCHARR_YTMUSIC_OAUTH` | `/config/ytmusic_oauth.json` | Путь (внутри контейнера) к OAuth-файлу `ytmusicapi` для авторизованного поиска YouTube Music. Используется только если файл существует; иначе поиск анонимный (см. [OAuth для поиска YouTube Music](#oauth-для-поиска-youtube-music)) |
 | `ALBFETCHARR_YTMUSIC_CLIENT_ID` | — | `client_id` OAuth-клиента Google для поиска YouTube Music (если не задан внутри самого OAuth-файла) |
 | `ALBFETCHARR_YTMUSIC_CLIENT_SECRET` | — | `client_secret` OAuth-клиента Google для поиска YouTube Music (если не задан внутри самого OAuth-файла) |
-| `ALBFETCHARR_ENABLE_YOUTUBE_MUSIC` | `1` | Включить YouTube Music источник (`0` / `1`) |
-| `ALBFETCHARR_ENABLE_SOUNDCLOUD` | `1` | Включить SoundCloud источник (`0` / `1`) |
+| `ALBFETCHARR_ENABLE_YANDEX` | `1` | Включить Яндекс Музыку как источник (`1`/`true`/`yes` — включён, `0`/`false`/`no` — отключён) |
+| `ALBFETCHARR_ENABLE_YOUTUBE_MUSIC` | `1` | Включить YouTube Music источник (`1`/`true`/`yes` — включён, `0`/`false`/`no` — отключён) |
+| `ALBFETCHARR_ENABLE_SOUNDCLOUD` | `1` | Включить SoundCloud источник (`1`/`true`/`yes` — включён, `0`/`false`/`no` — отключён) |
 
-### Сетевые параметры
+### Сетевые параметры (Яндекс Музыка)
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
-| `ALBFETCHARR_TIMEOUT` | `20` | Таймаут запроса (секунды) |
-| `ALBFETCHARR_TRIES` | `20` | Количество попыток при сетевых ошибках |
-| `ALBFETCHARR_RETRY_DELAY` | `5` | Задержка между повторными попытками (секунды) |
+| `ALBFETCHARR_YANDEX_TIMEOUT` | `20` | Таймаут запроса к Яндексу (секунды). Ранее `ALBFETCHARR_TIMEOUT` |
+| `ALBFETCHARR_YANDEX_TRIES` | `20` | Количество попыток при сетевых ошибках Яндекса. Ранее `ALBFETCHARR_TRIES` |
+| `ALBFETCHARR_YANDEX_RETRY_DELAY` | `5` | Задержка между повторными попытками Яндекса (секунды). Ранее `ALBFETCHARR_RETRY_DELAY` |
+
+### Хранилище настроек
+
+AlbFetcharr поддерживает постоянное хранилище настроек в SQLite (опционально). Без него приложение работает в режиме «только переменные окружения» — поведение не отличается от предыдущих версий.
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `ALBFETCHARR_DB_PATH` | `/config/albfetcharr.db` | Путь к SQLite-файлу хранилища настроек. Смонтируйте директорию `/config` на постоянный том, чтобы настройки пережили пересоздание контейнера |
+| `ALBFETCHARR_SECRET_KEY` | — | Fernet-ключ для шифрования секретов (`YANDEX_MUSIC_TOKEN`, `LIDARR_API_KEY`, …) в базе. Сгенерируйте: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **Предупреждение:** если ключ утерян — зашифрованные секреты нельзя восстановить; сделайте резервную копию ключа. Без ключа запись секретов в базу невозможна, чтение происходит из переменных окружения |
+
+Настройки также доступны через HTTP API:
+
+- `GET /api/settings` — все настройки с источником (`db` / `env` / `default`), секреты замаскированы
+- `PUT /api/settings` — обновить настройки (`{"key": "value", …}`); Tier-1–4 ключи реестра
+- `DELETE /api/settings/{key}` — удалить переопределение из базы (откат к env / умолчанию)
+
+> **Примечание об изменении логики `enable_*`:** начиная с этой версии переменные `ALBFETCHARR_ENABLE_YANDEX`, `ALBFETCHARR_ENABLE_YOUTUBE_MUSIC` и `ALBFETCHARR_ENABLE_SOUNDCLOUD` принимают только `1`/`true`/`yes` (включено) и `0`/`false`/`no` (отключено). В предыдущих версиях `enable_youtube_music` и `enable_soundcloud` считали _любое_ ненулевое значение (например, `false` или `no`) как «включено» — это была ошибка. Если вы явно задавали эти переменные, проверьте, что значение по-прежнему корректно.
 
 ### Контейнер
 
@@ -264,6 +283,19 @@ docker compose run --rm albfetcharr download "https://music.yandex.ru/album/1234
 docker compose run --rm albfetcharr download --source soundcloud "https://soundcloud.com/..."
 ```
 
+## Миграция переменных окружения
+
+В этой версии несколько переменных переименованы для точности:
+
+| Старая переменная | Новая переменная | Причина |
+|---|---|---|
+| `ALBFETCHARR_PATH_PATTERN` | `ALBFETCHARR_YANDEX_PATH_PATTERN` | применялась только к Яндекс Музыке; новая `ALBFETCHARR_YTDLP_PATH_PATTERN` — отдельная переменная для yt-dlp |
+| `ALBFETCHARR_TIMEOUT` | `ALBFETCHARR_YANDEX_TIMEOUT` | применялась только к Яндекс Музыке |
+| `ALBFETCHARR_TRIES` | `ALBFETCHARR_YANDEX_TRIES` | применялась только к Яндекс Музыке |
+| `ALBFETCHARR_RETRY_DELAY` | `ALBFETCHARR_YANDEX_RETRY_DELAY` | применялась только к Яндекс Музыке |
+
+Обновите свой `docker-compose.yml` / `.env` и при необходимости настройки в DWE-воркспейсе (`workspace/defaults.yml` / `workspace/local.yml`).
+
 ## Миграция с Yamdarr
 
 Если вы используете старый образ `semsemyonoff/yamdarr`, обновите `docker-compose.yml`:
@@ -299,11 +331,11 @@ docker compose run --rm albfetcharr download --source soundcloud "https://soundc
    | `YAMDARR_STICK_TO_ARTIST` | `ALBFETCHARR_STICK_TO_ARTIST` |
    | `YAMDARR_ONLY_MUSIC` | `ALBFETCHARR_ONLY_MUSIC` |
    | `YAMDARR_COMPAT_LEVEL` | `ALBFETCHARR_COMPAT_LEVEL` |
-   | `YAMDARR_PATH_PATTERN` | `ALBFETCHARR_PATH_PATTERN` |
+   | `YAMDARR_PATH_PATTERN` | `ALBFETCHARR_YANDEX_PATH_PATTERN` |
    | `YAMDARR_UNSAFE_PATH` | `ALBFETCHARR_UNSAFE_PATH` |
-   | `YAMDARR_TIMEOUT` | `ALBFETCHARR_TIMEOUT` |
-   | `YAMDARR_TRIES` | `ALBFETCHARR_TRIES` |
-   | `YAMDARR_RETRY_DELAY` | `ALBFETCHARR_RETRY_DELAY` |
+   | `YAMDARR_TIMEOUT` | `ALBFETCHARR_YANDEX_TIMEOUT` |
+   | `YAMDARR_TRIES` | `ALBFETCHARR_YANDEX_TRIES` |
+   | `YAMDARR_RETRY_DELAY` | `ALBFETCHARR_YANDEX_RETRY_DELAY` |
 
    Остальные переменные не изменились: `LIDARR_URL`, `LIDARR_API_KEY`, `YANDEX_MUSIC_TOKEN`, `YANDEX_MUSIC_QUALITY`, `DOWNLOAD_DIR`, `UID`, `GID`, `UMASK`.
 

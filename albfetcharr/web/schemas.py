@@ -1,6 +1,8 @@
 """Pydantic v2 models for AlbFetcharr API request/response validation."""
 
-from pydantic import BaseModel, ConfigDict, RootModel
+from pydantic import BaseModel, ConfigDict, RootModel, field_validator
+
+from albfetcharr.settings import registry as _registry
 
 
 class ErrorResponse(BaseModel):
@@ -16,6 +18,7 @@ class ConfigResponse(BaseModel):
     default_lang: str
     default_theme: str
     import_enabled: bool
+    encryption_enabled: bool
 
 
 class SourceItem(BaseModel):
@@ -112,6 +115,23 @@ class DownloadRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     items: list[DownloadItem]
+    overrides: dict[str, str] = {}
+
+    @field_validator("overrides")
+    @classmethod
+    def _validate_overrides(cls, v: dict[str, str]) -> dict[str, str]:
+        for key, value in v.items():
+            if not _registry.is_session_key(key):
+                raise ValueError(
+                    f"overrides key {key!r} is not a Tier-3 (scope=session) setting; "
+                    "only session-scoped keys are allowed in per-request overrides"
+                )
+            # Validate the value against the registry too — the resolver returns
+            # raw override strings unchanged (no validation at read time), so an
+            # invalid value (e.g. ytdlp_format="wma") would otherwise slip past
+            # the 202 and surface as an async download failure. Mirror PUT.
+            _registry.validate_value(_registry.get(key), str(value))
+        return v
 
 
 class DownloadStartedResponse(BaseModel):
@@ -124,3 +144,25 @@ class ClaimResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     claimed: bool
+
+
+class SettingItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    key: str
+    group: str
+    type: str
+    scope: str
+    secret: bool
+    source: str  # "db" | "env" | "default"
+    value: str | None = None  # non-secrets only
+    is_set: bool = False
+    preview: str | None = None  # secrets only — masked
+
+
+class SettingsResponse(RootModel[list[SettingItem]]):
+    pass
+
+
+class SettingsUpdateRequest(RootModel[dict[str, str]]):
+    pass

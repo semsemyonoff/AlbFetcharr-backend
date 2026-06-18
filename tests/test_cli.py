@@ -29,9 +29,9 @@ def test_download_help():
 @patch("albfetcharr.cli.get_wanted_albums")
 @patch("albfetcharr.cli.validate_library_map")
 @patch("albfetcharr.cli.get_root_folders", return_value=[])
-@patch("albfetcharr.cli.load_app_config")
+@patch("albfetcharr.cli.resolve_app_config")
 def test_wanted_no_albums(
-    mock_load_config,
+    mock_resolve_config,
     mock_get_root_folders,
     mock_validate,
     mock_get_albums,
@@ -43,7 +43,7 @@ def test_wanted_no_albums(
     mock_config.lidarr.base_url = "http://lidarr"
     mock_config.lidarr.api_key = "key"
     mock_config.yandex_options.download_dir = "/downloads"
-    mock_load_config.return_value = mock_config
+    mock_resolve_config.return_value = mock_config
 
     mock_get_albums.return_value = []
 
@@ -59,9 +59,9 @@ def test_wanted_no_albums(
 @patch("albfetcharr.cli.get_wanted_albums")
 @patch("albfetcharr.cli.validate_library_map")
 @patch("albfetcharr.cli.get_root_folders", return_value=[])
-@patch("albfetcharr.cli.load_app_config")
+@patch("albfetcharr.cli.resolve_app_config")
 def test_wanted_with_albums(
-    mock_load_config,
+    mock_resolve_config,
     mock_get_root_folders,
     mock_validate,
     mock_get_albums,
@@ -75,7 +75,7 @@ def test_wanted_with_albums(
     mock_config.lidarr.api_key = "key"
     mock_config.lidarr.import_path = ""
     mock_config.yandex_options.download_dir = "/downloads"
-    mock_load_config.return_value = mock_config
+    mock_resolve_config.return_value = mock_config
 
     mock_albums = [
         {
@@ -101,6 +101,117 @@ def test_wanted_with_albums(
     assert "Wanted albums (1):" in captured.out
     assert "Test Artist" in captured.out
     assert "Test Album" in captured.out
+
+
+@patch("albfetcharr.cli.clear_comments")
+@patch("albfetcharr.cli.find_album_dir")
+@patch("albfetcharr.cli.check_album_status")
+@patch("albfetcharr.cli.get_provider")
+@patch("albfetcharr.cli.get_wanted_albums")
+@patch("albfetcharr.cli.validate_library_map")
+@patch("albfetcharr.cli.get_root_folders", return_value=[])
+@patch("albfetcharr.cli.resolve_app_config")
+def test_wanted_clear_comments_from_resolved_config(
+    mock_resolve_config,
+    mock_get_root_folders,
+    mock_validate,
+    mock_get_albums,
+    mock_get_provider,
+    mock_check_status,
+    mock_find_album_dir,
+    mock_clear_comments,
+    capsys,
+):
+    """CLI download path reads clear_comments from resolved config."""
+    mock_config = MagicMock()
+    mock_config.lidarr.base_url = "http://lidarr"
+    mock_config.lidarr.api_key = "key"
+    mock_config.lidarr.import_path = ""
+    mock_config.yandex_options.clear_comments = True
+    mock_resolve_config.return_value = mock_config
+
+    mock_albums = [
+        {
+            "id": 1,
+            "title": "Clear Album",
+            "artist": {"artistName": "Clear Artist"},
+            "releaseDate": "2024-01-01",
+        }
+    ]
+    mock_get_albums.return_value = mock_albums
+
+    mock_provider = MagicMock()
+    mock_provider.name = "yandex"
+
+    def _download(match, *, on_progress=None, **kwargs):
+        return True
+
+    mock_provider.download.side_effect = _download
+    mock_provider.search.return_value = [MagicMock(url="https://music.yandex.ru/album/1")]
+    mock_get_provider.return_value = mock_provider
+
+    mock_check_status.return_value = "missing"
+    mock_find_album_dir.return_value = "/downloads/Clear Artist/Clear Album"
+
+    args = argparse.Namespace(no_import=False, source="yandex")
+    cmd_wanted(args)
+
+    mock_clear_comments.assert_called_once_with("/downloads/Clear Artist/Clear Album")
+
+
+@patch("albfetcharr.cli.clear_comments")
+@patch("albfetcharr.cli.find_album_dir")
+@patch("albfetcharr.cli.check_album_status")
+@patch("albfetcharr.cli.get_provider")
+@patch("albfetcharr.cli.get_wanted_albums")
+@patch("albfetcharr.cli.validate_library_map")
+@patch("albfetcharr.cli.get_root_folders", return_value=[])
+@patch("albfetcharr.cli.resolve_app_config")
+def test_wanted_clear_comments_false_skips(
+    mock_resolve_config,
+    mock_get_root_folders,
+    mock_validate,
+    mock_get_albums,
+    mock_get_provider,
+    mock_check_status,
+    mock_find_album_dir,
+    mock_clear_comments,
+    capsys,
+):
+    """CLI download path skips clear_comments when resolved config has it false."""
+    mock_config = MagicMock()
+    mock_config.lidarr.base_url = "http://lidarr"
+    mock_config.lidarr.api_key = "key"
+    mock_config.lidarr.import_path = ""
+    mock_config.yandex_options.clear_comments = False
+    mock_resolve_config.return_value = mock_config
+
+    mock_albums = [
+        {
+            "id": 1,
+            "title": "No Clear Album",
+            "artist": {"artistName": "No Clear Artist"},
+            "releaseDate": "2024-01-01",
+        }
+    ]
+    mock_get_albums.return_value = mock_albums
+
+    mock_provider = MagicMock()
+    mock_provider.name = "yandex"
+
+    def _download(match, *, on_progress=None, **kwargs):
+        return True
+
+    mock_provider.download.side_effect = _download
+    mock_provider.search.return_value = [MagicMock(url="https://music.yandex.ru/album/2")]
+    mock_get_provider.return_value = mock_provider
+
+    mock_check_status.return_value = "missing"
+
+    args = argparse.Namespace(no_import=False, source="yandex")
+    cmd_wanted(args)
+
+    mock_clear_comments.assert_not_called()
 
 
 @patch("albfetcharr.cli.get_provider")

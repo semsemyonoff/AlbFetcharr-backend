@@ -115,6 +115,7 @@ def post_import_cleanup(
     api_key: str,
     albums: list[dict],
     *,
+    library_map: dict[str, str] | None = None,
     log: LogFn = print,
 ) -> None:
     """Move cover art to library and clean up empty download directories.
@@ -124,6 +125,7 @@ def post_import_cleanup(
         base_url: Lidarr base URL.
         api_key: Lidarr API key.
         albums: List of dicts with 'artist', 'title', 'album_id' keys (from ready_for_import).
+        library_map: Parsed library path mapping; when None, library paths are used as-is.
         log: Callback for progress messages. Defaults to print.
     """
     for album_info in albums:
@@ -155,7 +157,7 @@ def post_import_cleanup(
                         " cover art will be discarded"
                     )
                 if dest_path:
-                    dest_path = resolve_library_path(dest_path)
+                    dest_path = resolve_library_path(dest_path, library_map)
                     dest_dir = Path(dest_path)
                     if not dest_dir.exists():
                         log(

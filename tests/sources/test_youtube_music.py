@@ -705,25 +705,49 @@ class TestBuildYtMusicClient:
         assert args[0] == _oauth_token()
         assert kwargs == {"oauth_credentials": "CREDS"}
 
-    def test_oauth_with_creds_from_env(self, mocker, tmp_path, monkeypatch):
+    def test_oauth_with_creds_from_opts(self, mocker, tmp_path):
+        """Client id/secret come from opts (resolved config), not env."""
         f = tmp_path / "oauth.json"
         f.write_text(json.dumps(_oauth_token()))
-        monkeypatch.setenv("ALBFETCHARR_YTMUSIC_CLIENT_ID", "envid")
-        monkeypatch.setenv("ALBFETCHARR_YTMUSIC_CLIENT_SECRET", "envsec")
+        opts = YtDlpOptions(
+            download_dir="/downloads",
+            ytmusic_oauth_file=str(f),
+            ytmusic_client_id="optsid",
+            ytmusic_client_secret="optssec",
+        )
         mock_ytm = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
         mock_creds = mocker.patch(
             "albfetcharr.sources.youtube_music.OAuthCredentials", return_value="CREDS"
         )
-        _build_ytmusic_client(self._opts(str(f)))
-        mock_creds.assert_called_once_with(client_id="envid", client_secret="envsec")
+        _build_ytmusic_client(opts)
+        mock_creds.assert_called_once_with(client_id="optsid", client_secret="optssec")
         assert mock_ytm.call_args.args[0] == _oauth_token()
 
-    def test_oauth_token_without_creds_falls_back_anonymous(self, mocker, tmp_path, monkeypatch):
-        monkeypatch.delenv("ALBFETCHARR_YTMUSIC_CLIENT_ID", raising=False)
-        monkeypatch.delenv("ALBFETCHARR_YTMUSIC_CLIENT_SECRET", raising=False)
+    def test_oauth_with_creds_opts_override_file(self, mocker, tmp_path):
+        """opts client_id/secret override those in the oauth file."""
+        f = tmp_path / "oauth.json"
+        data = {**_oauth_token(), "client_id": "fileid", "client_secret": "filesec"}
+        f.write_text(json.dumps(data))
+        opts = YtDlpOptions(
+            download_dir="/downloads",
+            ytmusic_oauth_file=str(f),
+            ytmusic_client_id=None,
+            ytmusic_client_secret=None,
+        )
+        mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
+        mock_creds = mocker.patch(
+            "albfetcharr.sources.youtube_music.OAuthCredentials", return_value="CREDS"
+        )
+        # File has client_id/secret; opts has none → falls back to file values.
+        _build_ytmusic_client(opts)
+        mock_creds.assert_called_once_with(client_id="fileid", client_secret="filesec")
+
+    def test_oauth_token_without_creds_falls_back_anonymous(self, mocker, tmp_path):
+        """Token without client_id/secret (neither in file nor opts) → anonymous."""
         f = tmp_path / "oauth.json"
         f.write_text(json.dumps(_oauth_token()))
         mock_ytm = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
+        # _opts sets no ytmusic_client_id/secret (defaults to None).
         _build_ytmusic_client(self._opts(str(f)))
         mock_ytm.assert_called_once_with()
 

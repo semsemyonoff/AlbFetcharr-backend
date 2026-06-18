@@ -12,7 +12,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, Response, jsonify, request
 from spectree import Response as SpecResponse
 
-from albfetcharr.config import load_lidarr_config, load_ui_defaults, load_yandex_options
 from albfetcharr.download.locator import check_album_status, find_album_dir
 from albfetcharr.download.tags import clear_comments
 from albfetcharr.lidarr.client import (
@@ -23,7 +22,10 @@ from albfetcharr.lidarr.client import (
     get_wanted_albums,
 )
 from albfetcharr.lidarr.importer import post_import_cleanup, run_import
-from albfetcharr.sources import all_providers, get_provider
+from albfetcharr.lidarr.library_map import parse_library_map_str
+from albfetcharr.settings import crypto, registry, store
+from albfetcharr.settings.resolver import resolve_app_config, resolve_value
+from albfetcharr.sources import all_providers, bootstrap_default_providers, get_provider
 from albfetcharr.sources.base import Match
 from albfetcharr.web import schemas
 from albfetcharr.web.spec import api
@@ -64,6 +66,100 @@ def log(msg: str | None):
     log_queue.put(msg)
 
 
+def _build_per_run_providers(cfg) -> dict:
+    """Construct fresh provider instances from a resolved AppConfig.
+
+    Used by the download thread so session-override options (e.g. ytdlp_format,
+    yandex_lyrics_format) are baked into the per-run provider, not the global
+    registry singleton. Falls back to the global registry for sources that can't
+    be constructed (e.g. Yandex with no token) via the caller's .get() fallback.
+    """
+    from albfetcharr.sources.soundcloud import SoundCloudProvider
+    from albfetcharr.sources.yandex import YandexMusicProvider
+    from albfetcharr.sources.youtube_music import YouTubeMusicProvider
+
+    providers: dict = {}
+    if cfg.enable_yandex and cfg.yandex_token:
+        providers["yandex"] = YandexMusicProvider(cfg.yandex_token, cfg.yandex_options)
+    if cfg.enable_youtube_music:
+        providers["youtube_music"] = YouTubeMusicProvider(cfg.ytdlp_options)
+    if cfg.enable_soundcloud:
+        providers["soundcloud"] = SoundCloudProvider(cfg.ytdlp_options)
+    return providers
+
+
+def _build_settings_items() -> list[dict]:
+    """Build the list of setting items for settings API responses."""
+    snapshot = store.all_raw()
+    items = []
+    for s in registry.all_settings():
+        if s.key in snapshot:
+            source = "db"
+        elif os.environ.get(s.env) is not None:
+            source = "env"
+        else:
+            source = "default"
+
+        if s.secret:
+            decrypted = None
+            if source == "db":
+                raw_db, _ = snapshot[s.key]
+                decrypted = crypto.decrypt(raw_db)
+                if decrypted is None:
+                    # Decrypt failed (SECRET_KEY loss/rotation or ciphertext
+                    # corruption): the resolver falls through to env/default, so
+                    # the reported source must too — otherwise the UI claims the
+                    # secret is active from DB while the effective value is
+                    # actually env/default.
+                    source = "env" if os.environ.get(s.env) is not None else "default"
+
+            if source == "db":
+                is_set = True
+                preview = crypto.mask(decrypted) if decrypted else None
+            elif source == "env":
+                env_val = os.environ.get(s.env, "")
+                is_set = bool(env_val)
+                preview = crypto.mask(env_val) if env_val else None
+            else:
+                is_set = False
+                preview = None
+            items.append(
+                {
+                    "key": s.key,
+                    "group": s.group,
+                    "type": s.type,
+                    "scope": s.scope,
+                    "secret": True,
+                    "source": source,
+                    "is_set": is_set,
+                    "preview": preview,
+                    "value": None,
+                }
+            )
+        else:
+            resolved = resolve_value(s, None, snapshot)
+            if resolved is None:
+                value_str = None
+            elif isinstance(resolved, bool):
+                value_str = "1" if resolved else "0"
+            else:
+                value_str = str(resolved)
+            items.append(
+                {
+                    "key": s.key,
+                    "group": s.group,
+                    "type": s.type,
+                    "scope": s.scope,
+                    "secret": False,
+                    "source": source,
+                    "is_set": source != "default",
+                    "value": value_str,
+                    "preview": None,
+                }
+            )
+    return items
+
+
 def register_routes(app: Flask):
     """Register all API routes."""
 
@@ -86,19 +182,18 @@ def register_routes(app: Flask):
     @app.route("/api/config")
     @api.validate(resp=SpecResponse(HTTP_200=schemas.ConfigResponse), tags=["config"])
     def api_config():
-        opts = load_yandex_options()
+        cfg = resolve_app_config()
         try:
-            default_quality = int(opts.quality)
+            default_quality = int(cfg.yandex_options.quality)
         except (ValueError, TypeError):
             default_quality = 2
-        ui_defaults = load_ui_defaults()
-        lidarr_cfg = load_lidarr_config()
         return jsonify(
             {
                 "default_quality": default_quality,
-                "default_lang": ui_defaults.language,
-                "default_theme": ui_defaults.theme,
-                "import_enabled": bool(lidarr_cfg.import_path),
+                "default_lang": cfg.ui_defaults.language,
+                "default_theme": cfg.ui_defaults.theme,
+                "import_enabled": bool(cfg.lidarr.import_path),
+                "encryption_enabled": crypto.is_enabled(),
             }
         )
 
@@ -108,13 +203,71 @@ def register_routes(app: Flask):
         providers = all_providers()
         return jsonify([{"id": p.id, "name": p.name} for p in providers])
 
+    @app.route("/api/settings")
+    @api.validate(resp=SpecResponse(HTTP_200=schemas.SettingsResponse), tags=["settings"])
+    def api_settings_get():
+        return jsonify(_build_settings_items())
+
+    @app.route("/api/settings", methods=["PUT"])
+    @api.validate(
+        json=schemas.SettingsUpdateRequest,
+        resp=SpecResponse(
+            HTTP_200=schemas.SettingsResponse,
+            HTTP_400=schemas.ErrorResponse,
+            HTTP_422=schemas.ErrorResponse,
+        ),
+        tags=["settings"],
+    )
+    def api_settings_put():
+        body = request.context.json
+        if body is None:
+            return jsonify({"error": "Request body must be JSON"}), 415
+        updates = body.root
+
+        for key, value in updates.items():
+            s = registry.get(key)
+            if s is None:
+                return jsonify({"error": f"Unknown setting: {key!r}"}), 400
+            if s.secret and not crypto.is_enabled():
+                return jsonify({"error": "set ALBFETCHARR_SECRET_KEY to store secrets"}), 400
+            try:
+                registry.validate_value(s, str(value))
+            except ValueError as e:
+                return jsonify({"error": str(e)}), 422
+
+        for key, value in updates.items():
+            s = registry.get(key)
+            if s.secret:
+                store.set_raw(key, crypto.encrypt(str(value)), is_secret=True)
+            else:
+                store.set_raw(key, str(value), is_secret=False)
+
+        bootstrap_default_providers()
+        return jsonify(_build_settings_items())
+
+    @app.route("/api/settings/<key>", methods=["DELETE"])
+    @api.validate(
+        resp=SpecResponse(
+            HTTP_200=schemas.SettingsResponse,
+            HTTP_404=schemas.ErrorResponse,
+        ),
+        tags=["settings"],
+    )
+    def api_settings_delete(key: str):
+        s = registry.get(key)
+        if s is None:
+            return jsonify({"error": f"Unknown setting: {key!r}"}), 404
+        store.delete(key)
+        bootstrap_default_providers()
+        return jsonify(_build_settings_items())
+
     @app.route("/api/wanted")
     @api.validate(
         resp=SpecResponse(HTTP_200=schemas.WantedResponse, HTTP_502=schemas.ErrorResponse),
         tags=["wanted"],
     )
     def api_wanted():
-        cfg = load_lidarr_config()
+        cfg = resolve_app_config().lidarr
         try:
             albums = get_wanted_albums(cfg.base_url, cfg.api_key)
         except Exception as e:
@@ -336,7 +489,9 @@ def register_routes(app: Flask):
         body = request.context.json
         if body is None:
             return jsonify({"error": "Request body must be JSON"}), 415
-        items = body.model_dump()["items"]
+        data = body.model_dump()
+        items = data["items"]
+        overrides: dict[str, str] = data.get("overrides") or {}
 
         for item in items:
             try:
@@ -368,7 +523,12 @@ def register_routes(app: Flask):
 
         def run_downloads():
             try:
-                cfg = load_lidarr_config()
+                # Session overrides (Tier-3 keys) bake into both the resolved config and
+                # per-run provider instances, so ytdlp_format / yandex_lyrics_format etc.
+                # take effect without touching the global registry.
+                app_cfg = resolve_app_config(overrides if overrides else None)
+                cfg = app_cfg.lidarr
+                per_run = _build_per_run_providers(app_cfg)
                 download_dir = os.environ.get("DOWNLOAD_DIR", "/downloads")
                 downloaded = []
 
@@ -378,14 +538,17 @@ def register_routes(app: Flask):
                     source = item.get("source", "")
                     match_url = item.get("match_url", "")
                     album_id = item.get("album_id", 0)
-                    quality = item.get("quality")
+                    item_quality = item.get("quality")
 
                     if not artist or not title or not source or not match_url:
                         log(f"[{idx}/{len(items)}] Skipping item with missing fields")
                         continue
 
+                    # Per-run provider has session overrides baked in; fall through to the
+                    # global registry for test fakes or sources that couldn't be constructed
+                    # (e.g. Yandex with no token).
                     try:
-                        provider = get_provider(source)
+                        provider = per_run.get(source) or get_provider(source)
                     except KeyError:
                         log(f"[{idx}/{len(items)}] Source '{source}' not available")
                         emit_progress(
@@ -396,7 +559,13 @@ def register_routes(app: Flask):
                     # Emit starting status
                     emit_progress(album_id, idx, len(items), "starting", f"{artist} — {title}")
 
-                    quality_str = str(quality) if quality is not None else ""
+                    # Yandex quality precedence: per-item → session override (baked into cfg) → default.
+                    effective_quality = (
+                        str(item_quality)
+                        if item_quality is not None
+                        else str(app_cfg.yandex_options.quality)
+                    )
+                    quality_str = str(item_quality) if item_quality is not None else ""
                     quality_info = f" (quality: {quality_str})" if quality_str else ""
                     log(f"[{idx}/{len(items)}] {artist} — {title}{quality_info}")
                     log(f"  Downloading from {provider.name}: {match_url}")
@@ -467,7 +636,7 @@ def register_routes(app: Flask):
 
                     try:
                         success = provider.download(
-                            match, quality=quality, log=log, on_progress=_on_progress
+                            match, quality=effective_quality, log=log, on_progress=_on_progress
                         )
                     except Exception as e:
                         success = False
@@ -479,7 +648,7 @@ def register_routes(app: Flask):
                         continue
 
                     if success:
-                        if source == "yandex" and load_yandex_options().clear_comments:
+                        if source == "yandex" and app_cfg.yandex_options.clear_comments:
                             album_dir = find_album_dir(download_dir, artist, title)
                             if album_dir:
                                 log("  Clearing comments tags...")
@@ -557,6 +726,7 @@ def register_routes(app: Flask):
                             cfg.base_url,
                             cfg.api_key,
                             downloaded,
+                            library_map=parse_library_map_str(app_cfg.lidarr.library_map),
                             log=log,
                         )
                         log("  Cleanup done.")

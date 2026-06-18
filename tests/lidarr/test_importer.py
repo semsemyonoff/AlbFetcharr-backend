@@ -322,7 +322,7 @@ def test_post_import_cleanup(tmp_path):
         patch("albfetcharr.lidarr.importer.resolve_library_path") as mock_resolve,
     ):
         mock_get_path.return_value = str(lib_album_dir)
-        mock_resolve.side_effect = lambda x: x
+        mock_resolve.side_effect = lambda x, m=None: x
 
         post_import_cleanup(
             str(download_dir),
@@ -366,7 +366,7 @@ def test_post_import_cleanup_no_cover(tmp_path):
         patch("albfetcharr.lidarr.importer.resolve_library_path") as mock_resolve,
     ):
         mock_get_path.return_value = "/library/Artist Two/Album Two"
-        mock_resolve.side_effect = lambda x: x
+        mock_resolve.side_effect = lambda x, m=None: x
 
         post_import_cleanup(
             str(download_dir),
@@ -440,7 +440,7 @@ def test_post_import_cleanup_library_path_inaccessible(tmp_path):
         patch("albfetcharr.lidarr.importer.resolve_library_path") as mock_resolve,
     ):
         mock_get_path.return_value = "/nonexistent/library/path"
-        mock_resolve.side_effect = lambda x: x
+        mock_resolve.side_effect = lambda x, m=None: x
 
         post_import_cleanup(
             str(download_dir),
@@ -453,3 +453,43 @@ def test_post_import_cleanup_library_path_inaccessible(tmp_path):
     assert not album_dir.exists(), "Album directory should still be removed"
     assert any("WARNING: Library path not accessible" in msg for msg in log_messages)
     assert any("Removed download dir" in msg for msg in log_messages)
+
+
+def test_post_import_cleanup_uses_threaded_library_map(tmp_path, monkeypatch):
+    """Cover art cleanup uses the passed library_map, not the env var.
+
+    Verifies the Codex finding: when library_map is threaded in as a parameter
+    and ALBFETCHARR_LIBRARY_MAP is not set, the correct library path is resolved.
+    """
+    monkeypatch.delenv("ALBFETCHARR_LIBRARY_MAP", raising=False)
+
+    download_dir = tmp_path / "downloads"
+    lidarr_dir = tmp_path / "lidarr_lib"
+    albfetcharr_dir = tmp_path / "alb_lib"
+
+    artist_dir = download_dir / "Artist Four"
+    album_dir = artist_dir / "Album Four"
+    album_dir.mkdir(parents=True)
+    cover_src = album_dir / "cover.jpg"
+    cover_src.write_text("fake cover")
+    (album_dir / "track1.flac").write_text("fake audio")
+
+    # Library dir as seen by Lidarr vs albfetcharr (different mount points).
+    lib_album_dir = albfetcharr_dir / "Artist Four" / "Album Four"
+    lib_album_dir.mkdir(parents=True)
+
+    # Lidarr returns the lidarr-internal path; the library_map translates it.
+    lidarr_path = str(lidarr_dir / "Artist Four" / "Album Four")
+    library_map = {str(lidarr_dir): str(albfetcharr_dir)}
+
+    with patch("albfetcharr.lidarr.importer.get_album_path", return_value=lidarr_path):
+        post_import_cleanup(
+            str(download_dir),
+            "http://lidarr:8686",
+            "key",
+            [{"artist": "Artist Four", "title": "Album Four", "album_id": 104}],
+            library_map=library_map,
+        )
+
+    assert (lib_album_dir / "cover.jpg").exists(), "Cover should be mapped via library_map"
+    assert not album_dir.exists(), "Download dir should be cleaned up"

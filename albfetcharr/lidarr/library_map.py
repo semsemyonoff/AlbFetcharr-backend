@@ -1,18 +1,16 @@
 """Library path mapping between Lidarr and albfetcharr mount points."""
 
 import logging
-import os
 
 logger = logging.getLogger("albfetcharr")
 
 
-def parse_library_map(env_var_name: str = "ALBFETCHARR_LIBRARY_MAP") -> dict[str, str]:
-    """Parse library map env var.
+def parse_library_map_str(raw: str | None) -> dict[str, str]:
+    """Parse a library map string into a path mapping dict.
 
     Format: lidarr_path=albfetcharr_path,lidarr_path2=albfetcharr_path2
     Maps Lidarr-internal root folder paths to albfetcharr mount points.
     """
-    raw = os.environ.get(env_var_name, "")
     if not raw:
         return {}
     mapping = {}
@@ -28,13 +26,10 @@ def parse_library_map(env_var_name: str = "ALBFETCHARR_LIBRARY_MAP") -> dict[str
 def resolve_library_path(lidarr_path: str, mapping: dict[str, str] | None = None) -> str:
     """Convert a Lidarr-internal path to an albfetcharr-accessible path.
 
-    Uses the provided mapping dict, or fetches from env if not provided.
+    Uses the provided mapping dict; returns the original path when no mapping is given.
     Finds the longest matching prefix in the mapping and substitutes it.
     Returns the original path if no mapping is configured or no prefix matches.
     """
-    if mapping is None:
-        mapping = parse_library_map()
-
     if not mapping:
         return lidarr_path
 
@@ -57,11 +52,8 @@ def validate_library_map(root_folders: list[dict], mapping: dict[str, str] | Non
 
     Args:
         root_folders: list of root folder dicts (with 'path' key) from Lidarr API
-        mapping: parsed mapping dict, or None to fetch from env
+        mapping: parsed mapping dict; when None or empty, validation is skipped
     """
-    if mapping is None:
-        mapping = parse_library_map()
-
     if not mapping:
         return
 
