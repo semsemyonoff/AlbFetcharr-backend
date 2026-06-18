@@ -194,6 +194,12 @@ def register_routes(app: Flask):
     @app.route("/api/config")
     @api.validate(resp=SpecResponse(HTTP_200=schemas.ConfigResponse), tags=["config"])
     def api_config():
+        """Return default UI config (quality, language, theme, feature flags).
+
+        Static per-deployment defaults the SPA reads once on load; includes
+        import_enabled and encryption_enabled so the UI can reflect optional
+        features.
+        """
         cfg = resolve_app_config()
         try:
             default_quality = int(cfg.yandex_options.quality)
@@ -223,12 +229,23 @@ def register_routes(app: Flask):
     @app.route("/api/sources")
     @api.validate(resp=SpecResponse(HTTP_200=schemas.SourcesResponse), tags=["sources"])
     def api_sources():
+        """List the available (enabled) source providers.
+
+        Only providers enabled via settings/credentials are returned; the SPA
+        uses these to populate the source picker.
+        """
         providers = all_providers()
         return jsonify([{"id": p.id, "name": p.name} for p in providers])
 
     @app.route("/api/settings")
     @api.validate(resp=SpecResponse(HTTP_200=schemas.SettingsResponse), tags=["settings"])
     def api_settings_get():
+        """List all settings with their resolved values and sources.
+
+        Returns every catalog setting with its resolved value, source
+        (db/env/default), and — for secrets — whether a value is set (masked,
+        never the plaintext).
+        """
         return jsonify(_build_settings_items())
 
     @app.route("/api/settings", methods=["PUT"])
@@ -242,6 +259,12 @@ def register_routes(app: Flask):
         tags=["settings"],
     )
     def api_settings_put():
+        """Upsert one or more settings.
+
+        Validates each key/value against the registry, persists it (encrypting
+        secrets), and re-bootstraps the provider registry so token/enable
+        changes apply without a restart.
+        """
         body = request.context.json
         if body is None:
             return jsonify({"error": "Request body must be JSON"}), 415
@@ -278,6 +301,11 @@ def register_routes(app: Flask):
         tags=["settings"],
     )
     def api_settings_delete(key: str):
+        """Delete a setting, reverting it to its env/default value.
+
+        Removes the stored override for the key; the value then falls back to its
+        env var or hardcoded default. Re-bootstraps providers like PUT.
+        """
         s = registry.get(key)
         if s is None:
             return jsonify({"error": f"Unknown setting: {key!r}"}), 404
@@ -292,6 +320,12 @@ def register_routes(app: Flask):
         tags=["wanted"],
     )
     def api_wanted():
+        """List Lidarr's wanted/missing albums with metadata.
+
+        Fetches Lidarr's wanted/missing list and enriches each album with its
+        type, duration, expected track count, cover art, and resolved root
+        folder.
+        """
         cfg = resolve_app_config().lidarr
         try:
             albums = get_wanted_albums(cfg.base_url, cfg.api_key)
@@ -357,6 +391,12 @@ def register_routes(app: Flask):
         tags=["search"],
     )
     def api_search():
+        """Search the configured sources for the requested albums.
+
+        Runs each requested album through the selected (or all enabled)
+        providers and returns per-album matches; provider failures are isolated
+        and reported per album rather than failing the whole request.
+        """
         # spectree only populates request.context.json for JSON content types; a
         # form/multipart POST leaves it None (no 422 raised). Guard it so a wrong
         # content type returns a clean 415 instead of crashing on model_dump().
@@ -451,6 +491,12 @@ def register_routes(app: Flask):
         tags=["download"],
     )
     def api_download_stream_claim():
+        """Claim the single-consumer download log stream.
+
+        Preflight that reserves the single SSE log stream before a download
+        starts, preventing orphaned server-side downloads when more than one
+        client is open. Returns 409 if the stream is already held.
+        """
         do_drain = False
         with _stream_claim_lock:
             now = time.monotonic()
@@ -511,6 +557,12 @@ def register_routes(app: Flask):
         tags=["download"],
     )
     def api_download():
+        """Start downloading the selected albums (async; progress via SSE stream).
+
+        Accepts the chosen matches and runs them under a single-flight lock;
+        returns 202 immediately while progress streams over
+        /api/download/stream. Returns 409 if a download is already running.
+        """
         # See api_search: guard against a non-JSON content type leaving context.json None.
         body = request.context.json
         if body is None:
