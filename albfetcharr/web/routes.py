@@ -66,6 +66,28 @@ def log(msg: str | None):
     log_queue.put(msg)
 
 
+def _build_per_run_providers(cfg) -> dict:
+    """Construct fresh provider instances from a resolved AppConfig.
+
+    Used by the download thread so session-override options (e.g. ytdlp_format,
+    yandex_lyrics_format) are baked into the per-run provider, not the global
+    registry singleton. Falls back to the global registry for sources that can't
+    be constructed (e.g. Yandex with no token) via the caller's .get() fallback.
+    """
+    from albfetcharr.sources.soundcloud import SoundCloudProvider
+    from albfetcharr.sources.yandex import YandexMusicProvider
+    from albfetcharr.sources.youtube_music import YouTubeMusicProvider
+
+    providers: dict = {}
+    if cfg.enable_yandex and cfg.yandex_token:
+        providers["yandex"] = YandexMusicProvider(cfg.yandex_token, cfg.yandex_options)
+    if cfg.enable_youtube_music:
+        providers["youtube_music"] = YouTubeMusicProvider(cfg.ytdlp_options)
+    if cfg.enable_soundcloud:
+        providers["soundcloud"] = SoundCloudProvider(cfg.ytdlp_options)
+    return providers
+
+
 def _build_settings_items() -> list[dict]:
     """Build the list of setting items for settings API responses."""
     snapshot = store.all_raw()
@@ -456,7 +478,9 @@ def register_routes(app: Flask):
         body = request.context.json
         if body is None:
             return jsonify({"error": "Request body must be JSON"}), 415
-        items = body.model_dump()["items"]
+        data = body.model_dump()
+        items = data["items"]
+        overrides: dict[str, str] = data.get("overrides") or {}
 
         for item in items:
             try:
@@ -488,8 +512,12 @@ def register_routes(app: Flask):
 
         def run_downloads():
             try:
-                app_cfg = resolve_app_config()
+                # Session overrides (Tier-3 keys) bake into both the resolved config and
+                # per-run provider instances, so ytdlp_format / yandex_lyrics_format etc.
+                # take effect without touching the global registry.
+                app_cfg = resolve_app_config(overrides if overrides else None)
                 cfg = app_cfg.lidarr
+                per_run = _build_per_run_providers(app_cfg)
                 download_dir = os.environ.get("DOWNLOAD_DIR", "/downloads")
                 downloaded = []
 
@@ -499,14 +527,17 @@ def register_routes(app: Flask):
                     source = item.get("source", "")
                     match_url = item.get("match_url", "")
                     album_id = item.get("album_id", 0)
-                    quality = item.get("quality")
+                    item_quality = item.get("quality")
 
                     if not artist or not title or not source or not match_url:
                         log(f"[{idx}/{len(items)}] Skipping item with missing fields")
                         continue
 
+                    # Per-run provider has session overrides baked in; fall through to the
+                    # global registry for test fakes or sources that couldn't be constructed
+                    # (e.g. Yandex with no token).
                     try:
-                        provider = get_provider(source)
+                        provider = per_run.get(source) or get_provider(source)
                     except KeyError:
                         log(f"[{idx}/{len(items)}] Source '{source}' not available")
                         emit_progress(
@@ -517,7 +548,13 @@ def register_routes(app: Flask):
                     # Emit starting status
                     emit_progress(album_id, idx, len(items), "starting", f"{artist} — {title}")
 
-                    quality_str = str(quality) if quality is not None else ""
+                    # Yandex quality precedence: per-item → session override (baked into cfg) → default.
+                    effective_quality = (
+                        str(item_quality)
+                        if item_quality is not None
+                        else str(app_cfg.yandex_options.quality)
+                    )
+                    quality_str = str(item_quality) if item_quality is not None else ""
                     quality_info = f" (quality: {quality_str})" if quality_str else ""
                     log(f"[{idx}/{len(items)}] {artist} — {title}{quality_info}")
                     log(f"  Downloading from {provider.name}: {match_url}")
@@ -588,7 +625,7 @@ def register_routes(app: Flask):
 
                     try:
                         success = provider.download(
-                            match, quality=quality, log=log, on_progress=_on_progress
+                            match, quality=effective_quality, log=log, on_progress=_on_progress
                         )
                     except Exception as e:
                         success = False

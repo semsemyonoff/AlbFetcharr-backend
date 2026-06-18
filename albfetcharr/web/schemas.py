@@ -1,6 +1,8 @@
 """Pydantic v2 models for AlbFetcharr API request/response validation."""
 
-from pydantic import BaseModel, ConfigDict, RootModel
+from pydantic import BaseModel, ConfigDict, RootModel, field_validator
+
+from albfetcharr.settings import registry as _registry
 
 
 class ErrorResponse(BaseModel):
@@ -112,6 +114,18 @@ class DownloadRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     items: list[DownloadItem]
+    overrides: dict[str, str] = {}
+
+    @field_validator("overrides")
+    @classmethod
+    def _validate_overrides(cls, v: dict[str, str]) -> dict[str, str]:
+        for key in v:
+            if not _registry.is_session_key(key):
+                raise ValueError(
+                    f"overrides key {key!r} is not a Tier-3 (scope=session) setting; "
+                    "only session-scoped keys are allowed in per-request overrides"
+                )
+        return v
 
 
 class DownloadStartedResponse(BaseModel):
