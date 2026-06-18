@@ -167,6 +167,28 @@ def test_api_config_returns_ui_defaults(client):
 
 
 @pytest.mark.usefixtures("_clean_registry")
+def test_api_config_encryption_disabled(client, monkeypatch):
+    """encryption_enabled is false when ALBFETCHARR_SECRET_KEY is unset."""
+    monkeypatch.delenv("ALBFETCHARR_SECRET_KEY", raising=False)
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["encryption_enabled"] is False
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_api_config_encryption_enabled(client, monkeypatch):
+    """encryption_enabled is true when ALBFETCHARR_SECRET_KEY holds a valid Fernet key."""
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("ALBFETCHARR_SECRET_KEY", Fernet.generate_key().decode())
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["encryption_enabled"] is True
+
+
+@pytest.mark.usefixtures("_clean_registry")
 def test_api_sources(client):
     """Test /api/sources endpoint returns registered providers."""
     response = client.get("/api/sources")

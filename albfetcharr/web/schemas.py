@@ -18,6 +18,7 @@ class ConfigResponse(BaseModel):
     default_lang: str
     default_theme: str
     import_enabled: bool
+    encryption_enabled: bool
 
 
 class SourceItem(BaseModel):

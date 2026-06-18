@@ -193,6 +193,7 @@ def register_routes(app: Flask):
                 "default_lang": cfg.ui_defaults.language,
                 "default_theme": cfg.ui_defaults.theme,
                 "import_enabled": bool(cfg.lidarr.import_path),
+                "encryption_enabled": crypto.is_enabled(),
             }
         )
 
