@@ -49,8 +49,10 @@ class WantedAlbum(BaseModel):
     title: str
     album_id: int
     release_date: str
-    added: str
-    status: str
+    album_type: str = ""  # Lidarr albumType: Album / EP / Single
+    duration: int = 0  # total album runtime in milliseconds
+    track_count: int = 0  # expected track count (Lidarr statistics.trackCount)
+    cover_url: str = ""  # album cover art URL (cover-art-archive or Lidarr-local)
     root_folder: str
 
 

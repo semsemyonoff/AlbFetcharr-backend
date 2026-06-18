@@ -238,6 +238,10 @@ def test_api_wanted(client, tmp_path):
                     "artist": {"id": 10, "artistName": "Artist One"},
                     "title": "Album One",
                     "releaseDate": "2024-01-01",
+                    "albumType": "Album",
+                    "duration": 1800000,
+                    "statistics": {"trackCount": 10},
+                    "images": [{"coverType": "cover", "remoteUrl": "https://img.test/cover.jpg"}],
                 }
             ],
             "totalRecords": 1,
@@ -256,13 +260,6 @@ def test_api_wanted(client, tmp_path):
         json=[{"id": 10, "path": "/music/Artist One"}],
         status=200,
     )
-    responses.add(
-        responses.GET,
-        "http://lidarr.test/api/v1/track",
-        json=[{"id": i} for i in range(10)],
-        status=200,
-    )
-
     with patch.dict(
         "os.environ",
         {
@@ -276,9 +273,14 @@ def test_api_wanted(client, tmp_path):
         data = response.get_json()
         assert isinstance(data, list)
         assert len(data) > 0
-        assert "artist" in data[0]
-        assert "title" in data[0]
-        assert "status" in data[0]
+        assert data[0]["artist"] == "Artist One"
+        assert data[0]["title"] == "Album One"
+        # Album metadata comes straight from the wanted record (no extra calls).
+        assert data[0]["album_type"] == "Album"
+        assert data[0]["duration"] == 1800000
+        assert data[0]["track_count"] == 10
+        assert data[0]["cover_url"] == "https://img.test/cover.jpg"
+        assert "status" not in data[0]
 
 
 @pytest.mark.usefixtures("_clean_registry")

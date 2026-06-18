@@ -12,12 +12,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, Response, jsonify, request
 from spectree import Response as SpecResponse
 
-from albfetcharr.download.locator import check_album_status, find_album_dir
+from albfetcharr.download.locator import find_album_dir
 from albfetcharr.download.tags import clear_comments
 from albfetcharr.lidarr.client import (
     get_all_artists,
     get_artist_root_folder,
-    get_lidarr_track_count,
     get_root_folders,
     get_wanted_albums,
 )
@@ -299,7 +298,6 @@ def register_routes(app: Flask):
         except Exception as e:
             logger.warning("Could not fetch wanted albums: %s", e)
             return jsonify({"error": "Could not reach Lidarr"}), 502
-        download_dir = os.environ.get("DOWNLOAD_DIR", "/downloads")
 
         root_folders = []
         artist_rf_map = {}
@@ -322,20 +320,20 @@ def register_routes(app: Flask):
             title = album.get("title", "Unknown Album")
             album_id = album.get("id", 0)
             release_date = (album.get("releaseDate") or "N/A")[:10]
-            added = (album.get("added") or "")[:10]
+            album_type = album.get("albumType", "")
+            duration = album.get("duration") or 0  # total runtime in ms
+            # Expected track count is already in the wanted record's statistics —
+            # no separate GET /api/v1/track call needed (it returns the same value).
+            # `or {}` guards against Lidarr sending statistics: null.
+            track_count = (album.get("statistics") or {}).get("trackCount", 0)
+            # Album cover from Lidarr's images list; prefer the cover-art-archive
+            # remoteUrl, fall back to the Lidarr-local /MediaCover path.
+            cover_url = ""
+            for img in album.get("images", []):
+                if img.get("coverType") == "cover":
+                    cover_url = img.get("remoteUrl") or img.get("url") or ""
+                    break
 
-            def _track_count_fetcher(aid=album_id):
-                try:
-                    return get_lidarr_track_count(cfg.base_url, cfg.api_key, aid)
-                except Exception:
-                    return 0
-
-            status = check_album_status(
-                download_dir,
-                artist,
-                title,
-                _track_count_fetcher,
-            )
             root_folder = artist_rf_map.get(artist_id, "")
             result.append(
                 {
@@ -343,8 +341,10 @@ def register_routes(app: Flask):
                     "title": title,
                     "album_id": album_id,
                     "release_date": release_date,
-                    "added": added,
-                    "status": status,
+                    "album_type": album_type,
+                    "duration": duration,
+                    "track_count": track_count,
+                    "cover_url": cover_url,
                     "root_folder": root_folder,
                 }
             )
