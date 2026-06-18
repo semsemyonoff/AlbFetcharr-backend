@@ -92,6 +92,52 @@ def test_get_settings_secret_from_env_is_masked(client):
     assert token["preview"].startswith("•••")
 
 
+def test_get_settings_secret_db_decrypt_failure_downgrades_to_default(client, monkeypatch):
+    """A DB secret that can't be decrypted (key loss/rotation, no env fallback) is
+    reported as source='default', is_set=False — matching what the resolver uses,
+    not a misleading active DB value."""
+    from albfetcharr.settings import store
+
+    key_a = Fernet.generate_key().decode()
+    ciphertext = Fernet(key_a.encode()).encrypt(b"db-only-token").decode()
+    store.set_raw("yandex_token", ciphertext, is_secret=True)
+
+    # Rotate to a different valid key so decryption fails.
+    key_b = Fernet.generate_key().decode()
+    monkeypatch.setenv("ALBFETCHARR_SECRET_KEY", key_b)
+    monkeypatch.delenv("YANDEX_MUSIC_TOKEN", raising=False)
+
+    resp = client.get("/api/settings")
+    data = resp.get_json()
+    token = next(item for item in data if item["key"] == "yandex_token")
+    assert token["source"] == "default"
+    assert token["is_set"] is False
+    assert token["preview"] is None
+
+
+def test_get_settings_secret_db_decrypt_failure_falls_back_to_env(client, monkeypatch):
+    """When a DB secret can't be decrypted but an env fallback exists, the API reports
+    source='env' with the env value masked — mirroring the resolver's fall-through."""
+    from albfetcharr.settings import store
+
+    key_a = Fernet.generate_key().decode()
+    ciphertext = Fernet(key_a.encode()).encrypt(b"db-only-token").decode()
+    store.set_raw("yandex_token", ciphertext, is_secret=True)
+
+    key_b = Fernet.generate_key().decode()
+    monkeypatch.setenv("ALBFETCHARR_SECRET_KEY", key_b)
+    monkeypatch.setenv("YANDEX_MUSIC_TOKEN", "env-fallback-token")
+
+    resp = client.get("/api/settings")
+    data = resp.get_json()
+    token = next(item for item in data if item["key"] == "yandex_token")
+    assert token["source"] == "env"
+    assert token["is_set"] is True
+    assert token["preview"] is not None
+    assert "env-fallback-token" not in (token["preview"] or "")
+    assert token["preview"].startswith("•••")
+
+
 # ── PUT /api/settings ──────────────────────────────────────────────────────────
 
 

@@ -119,12 +119,17 @@ class DownloadRequest(BaseModel):
     @field_validator("overrides")
     @classmethod
     def _validate_overrides(cls, v: dict[str, str]) -> dict[str, str]:
-        for key in v:
+        for key, value in v.items():
             if not _registry.is_session_key(key):
                 raise ValueError(
                     f"overrides key {key!r} is not a Tier-3 (scope=session) setting; "
                     "only session-scoped keys are allowed in per-request overrides"
                 )
+            # Validate the value against the registry too — the resolver returns
+            # raw override strings unchanged (no validation at read time), so an
+            # invalid value (e.g. ytdlp_format="wma") would otherwise slip past
+            # the 202 and surface as an async download failure. Mirror PUT.
+            _registry.validate_value(_registry.get(key), str(value))
         return v
 
 

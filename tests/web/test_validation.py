@@ -308,6 +308,57 @@ def test_download_overrides_unknown_key_rejected(client):
     assert resp.status_code == 422
 
 
+def test_download_overrides_invalid_value_rejected(client):
+    """overrides with a valid session key but an invalid value is rejected → 422.
+
+    The resolver returns raw override strings unchanged, so an invalid value must
+    be caught at the request boundary (like PUT) rather than failing the download
+    asynchronously after a 202.
+    """
+    resp = client.post(
+        "/api/download",
+        data=json.dumps(
+            {
+                "items": [
+                    {
+                        "source": "fake",
+                        "artist": "A",
+                        "title": "B",
+                        "match_url": "http://x",
+                        "album_id": 1,
+                    }
+                ],
+                "overrides": {"ytdlp_format": "wma"},
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 422
+
+
+def test_download_overrides_invalid_int_value_rejected(client):
+    """overrides with an out-of-type value for an int session key → 422."""
+    resp = client.post(
+        "/api/download",
+        data=json.dumps(
+            {
+                "items": [
+                    {
+                        "source": "fake",
+                        "artist": "A",
+                        "title": "B",
+                        "match_url": "http://x",
+                        "album_id": 1,
+                    }
+                ],
+                "overrides": {"ytdlp_quality": "notanint"},
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 422
+
+
 def test_download_overrides_session_key_accepted(client):
     """overrides with a valid Tier-3 session key is accepted → 202."""
     from albfetcharr.web.routes import download_lock

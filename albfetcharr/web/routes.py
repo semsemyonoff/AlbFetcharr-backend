@@ -101,9 +101,19 @@ def _build_settings_items() -> list[dict]:
             source = "default"
 
         if s.secret:
+            decrypted = None
             if source == "db":
                 raw_db, _ = snapshot[s.key]
                 decrypted = crypto.decrypt(raw_db)
+                if decrypted is None:
+                    # Decrypt failed (SECRET_KEY loss/rotation or ciphertext
+                    # corruption): the resolver falls through to env/default, so
+                    # the reported source must too — otherwise the UI claims the
+                    # secret is active from DB while the effective value is
+                    # actually env/default.
+                    source = "env" if os.environ.get(s.env) is not None else "default"
+
+            if source == "db":
                 is_set = True
                 preview = crypto.mask(decrypted) if decrypted else None
             elif source == "env":
