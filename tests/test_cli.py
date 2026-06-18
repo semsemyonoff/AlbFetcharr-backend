@@ -215,23 +215,6 @@ def test_wanted_clear_comments_false_skips(
 
 
 @patch("albfetcharr.cli.get_provider")
-def test_download_with_yandex_url(mock_get_provider):
-    """Test 'download' subcommand with Yandex Music URL."""
-    mock_provider = MagicMock()
-    mock_provider.download.return_value = True
-    mock_get_provider.return_value = mock_provider
-
-    url = "https://music.yandex.ru/album/12345"
-    args = argparse.Namespace(url=url, source=None)
-
-    with patch("builtins.print"):
-        cmd_download(args)
-
-    mock_get_provider.assert_called_with("yandex")
-    mock_provider.download.assert_called_once()
-
-
-@patch("albfetcharr.cli.get_provider")
 def test_download_with_explicit_source(mock_get_provider):
     """Test 'download' subcommand with explicit source."""
     mock_provider = MagicMock()

@@ -8,6 +8,7 @@ from albfetcharr.download.tags import clear_comments
 from albfetcharr.lidarr.client import get_lidarr_track_count, get_root_folders, get_wanted_albums
 from albfetcharr.lidarr.importer import post_import_cleanup, run_import
 from albfetcharr.lidarr.library_map import parse_library_map_str, validate_library_map
+from albfetcharr.logging_config import configure_logging
 from albfetcharr.settings.resolver import resolve_app_config
 from albfetcharr.sources import Match, bootstrap_default_providers, get_provider
 
@@ -84,6 +85,10 @@ def cmd_wanted(args):
         title = album.get("title", "Unknown Album")
         album_id = album.get("id", 0)
         release_date = (album.get("releaseDate") or "N/A")[:10]
+        # Expected track count is already in the wanted record's statistics;
+        # fall back to a GET /api/v1/track call only if it's missing. `or {}`
+        # guards against Lidarr sending statistics: null.
+        album_track_count = (album.get("statistics") or {}).get("trackCount", 0)
 
         search_results = ym_provider.search(artist, title, limit=1)
         ym_url = search_results[0].url if search_results else None
@@ -93,8 +98,8 @@ def cmd_wanted(args):
             download_dir,
             artist,
             title,
-            lambda aid=album_id: get_lidarr_track_count(
-                lidarr_cfg.base_url, lidarr_cfg.api_key, aid
+            lambda c=album_track_count, aid=album_id: (
+                c or get_lidarr_track_count(lidarr_cfg.base_url, lidarr_cfg.api_key, aid)
             ),
         )
         status_labels = {
@@ -261,6 +266,7 @@ def main():
         parser.print_help()
         sys.exit(0)
 
+    configure_logging(resolve_app_config().log_level)
     bootstrap_default_providers()
 
     args.func(args)

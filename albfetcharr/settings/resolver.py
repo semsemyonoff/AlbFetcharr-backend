@@ -167,4 +167,5 @@ def resolve_app_config(session_overrides: dict[str, str] | None = None) -> AppCo
         enable_yandex=bool(rv("enable_yandex")),
         enable_youtube_music=bool(rv("enable_youtube_music")),
         enable_soundcloud=bool(rv("enable_soundcloud")),
+        log_level=str(rv("app_log_level")),
     )

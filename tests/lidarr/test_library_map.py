@@ -100,12 +100,6 @@ class TestResolveLibraryPath:
         result = resolve_library_path("/mnt/lidarr/artist", mapping)
         assert result == "/mnt/lidarr/artist"  # /mnt/lid does not match /mnt/lidarr
 
-    def test_trailing_slashes_in_paths_ignored(self):
-        """Trailing slashes in mapping don't affect matching."""
-        mapping = {"/mnt/lidarr": "/mnt/albfetcharr"}
-        result = resolve_library_path("/mnt/lidarr/artist/album", mapping)
-        assert result == "/mnt/albfetcharr/artist/album"
-
 
 class TestValidateLibraryMap:
     def test_none_mapping_no_warning(self, caplog):

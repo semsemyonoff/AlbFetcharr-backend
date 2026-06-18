@@ -3,10 +3,8 @@
 import shutil
 from pathlib import Path
 
-import requests
-
 from albfetcharr.download.locator import find_album_dir
-from albfetcharr.lidarr.client import get_album_path, wait_for_command
+from albfetcharr.lidarr.client import _request, get_album_path, wait_for_command
 from albfetcharr.lidarr.library_map import resolve_library_path
 from albfetcharr.sources.base import LogFn
 
@@ -33,7 +31,8 @@ def run_import(
     headers = {"X-Api-Key": api_key}
 
     log(f"Scanning for import: {download_path}")
-    resp = requests.get(
+    resp = _request(
+        "GET",
         f"{base_url}/api/v1/manualimport",
         params={"folder": download_path, "filterExistingFiles": "true"},
         headers=headers,
@@ -87,7 +86,8 @@ def run_import(
         return False
 
     log(f"  Importing {len(import_files)} file(s) into Lidarr...")
-    resp = requests.post(
+    resp = _request(
+        "POST",
         f"{base_url}/api/v1/command",
         json={
             "name": "ManualImport",

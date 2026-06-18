@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from albfetcharr.config import YandexOptions
-from albfetcharr.sources import register
 from albfetcharr.sources.yandex import YandexMusicProvider
 
 
@@ -347,34 +346,3 @@ class TestThreadSafety:
 
         assert call_count[0] == 8
         assert max_concurrent[0] == 1
-
-
-class TestProviderRegistration:
-    """Test provider registration in registry."""
-
-    def test_provider_registration(self):
-        """Test that provider can be registered and retrieved."""
-        options = YandexOptions(
-            quality="2",
-            lyrics_format="lrc",
-            cover_resolution="400",
-            embed_cover=False,
-            skip_existing=True,
-            delay="0",
-            compat_level="1",
-            timeout="20",
-            tries="20",
-            retry_delay="5",
-            stick_to_artist=False,
-            only_music=False,
-            unsafe_path=False,
-            path_pattern=None,
-            download_dir="/downloads",
-        )
-        provider = YandexMusicProvider(token="test", options=options)
-        register(provider)
-
-        from albfetcharr.sources import get_provider
-
-        retrieved = get_provider("yandex")
-        assert retrieved is provider

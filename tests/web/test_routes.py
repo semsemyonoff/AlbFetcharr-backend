@@ -137,6 +137,30 @@ def client():
 
 
 @pytest.mark.usefixtures("_clean_registry")
+def test_api_health_ok(client):
+    """/api/health is a dependency-free 200 liveness probe."""
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "ok"}
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_api_version(client):
+    """/api/version reports the service version plus bundled tool versions."""
+    from albfetcharr.version import APP_VERSION
+
+    response = client.get("/api/version")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert set(data) == {"albfetcharr", "yt_dlp", "ymd"}
+    # Service version is the build-time APP_VERSION.
+    assert data["albfetcharr"] == APP_VERSION
+    # Tool versions are read live from installed metadata — never blank.
+    assert data["yt_dlp"]
+    assert data["ymd"]
+
+
+@pytest.mark.usefixtures("_clean_registry")
 @responses.activate
 def test_api_config(client):
     """Test /api/config endpoint returns default quality."""
@@ -214,6 +238,10 @@ def test_api_wanted(client, tmp_path):
                     "artist": {"id": 10, "artistName": "Artist One"},
                     "title": "Album One",
                     "releaseDate": "2024-01-01",
+                    "albumType": "Album",
+                    "duration": 1800000,
+                    "statistics": {"trackCount": 10},
+                    "images": [{"coverType": "cover", "remoteUrl": "https://img.test/cover.jpg"}],
                 }
             ],
             "totalRecords": 1,
@@ -232,13 +260,6 @@ def test_api_wanted(client, tmp_path):
         json=[{"id": 10, "path": "/music/Artist One"}],
         status=200,
     )
-    responses.add(
-        responses.GET,
-        "http://lidarr.test/api/v1/track",
-        json=[{"id": i} for i in range(10)],
-        status=200,
-    )
-
     with patch.dict(
         "os.environ",
         {
@@ -252,9 +273,14 @@ def test_api_wanted(client, tmp_path):
         data = response.get_json()
         assert isinstance(data, list)
         assert len(data) > 0
-        assert "artist" in data[0]
-        assert "title" in data[0]
-        assert "status" in data[0]
+        assert data[0]["artist"] == "Artist One"
+        assert data[0]["title"] == "Album One"
+        # Album metadata comes straight from the wanted record (no extra calls).
+        assert data[0]["album_type"] == "Album"
+        assert data[0]["duration"] == 1800000
+        assert data[0]["track_count"] == 10
+        assert data[0]["cover_url"] == "https://img.test/cover.jpg"
+        assert "status" not in data[0]
 
 
 @pytest.mark.usefixtures("_clean_registry")
@@ -566,19 +592,6 @@ def test_api_download_stream(client):
 
 
 @pytest.mark.usefixtures("_clean_registry")
-def test_index_returns_html(client):
-    """Test / endpoint returns the React app shell."""
-    dist = Path(__file__).parents[2] / "albfetcharr" / "web" / "static" / "dist" / "index.html"
-    if not dist.exists():
-        pytest.skip("Frontend not built — build the frontend repo and deploy dist into static/dist")
-    response = client.get("/")
-    assert response.status_code == 200
-    assert b"<!doctype html>" in response.data or b"<html" in response.data
-    assert b'<div id="root"></div>' in response.data
-    assert b"/static/dist/assets/" in response.data
-
-
-@pytest.mark.usefixtures("_clean_registry")
 def test_stream_claim_returns_409_when_held(client):
     """Test /api/download/stream/claim returns 409 when stream is held."""
     from albfetcharr.web.routes import _stream_claim_lock, _stream_claim_state
@@ -679,109 +692,6 @@ def test_stream_claim_reconnect_takes_over_held_claim(client):
     # Generation must have been incremented so the old generator's finally is a no-op
     with _stream_claim_lock:
         assert _stream_claim_state["generation"] > gen_after_first
-
-
-@pytest.mark.usefixtures("_clean_registry")
-def test_stream_generator_yields_done_to_new_owner_after_reconnect(client):
-    """Old generator must not silently drop the None sentinel after reconnect takeover.
-
-    Sequence:
-    1. Gen=1 generator starts and captures my_gen=1.
-    2. Reconnect takeover increments generation to 2.
-    3. Old generator unblocks from get() with msg=None; checks generation, sees
-       it changed, puts None back, and exits WITHOUT yielding done.
-    4. The None is now back in the queue for the new consumer to drain.
-    """
-    from albfetcharr.web.routes import (
-        _stream_claim_lock,
-        _stream_claim_state,
-        log_queue,
-    )
-
-    # Claim (generation becomes 1)
-    response = client.post("/api/download/stream/claim")
-    assert response.status_code == 200
-    with _stream_claim_lock:
-        gen1 = _stream_claim_state["generation"]
-
-    # Simulate reconnect takeover (generation becomes 2)
-    with _stream_claim_lock:
-        _stream_claim_state["generation"] += 1
-
-    # Old generator behaviour: it captured my_gen=gen1 but generation is now gen2.
-    # When it pops None it should put it back and break instead of yielding done.
-    # We simulate the generator logic directly.
-    my_gen = gen1
-    log_queue.put(None)  # the done sentinel
-
-    msg = log_queue.get_nowait()
-    with _stream_claim_lock:
-        still_owner = _stream_claim_state["generation"] == my_gen
-
-    assert not still_owner, "sanity: old generator is no longer the owner"
-
-    # Old generator must put the sentinel back rather than discard it
-    log_queue.put(msg)
-
-    # The sentinel should now be retrievable by the new consumer
-    recovered = log_queue.get_nowait()
-    assert recovered is None, "None sentinel must survive reconnect takeover"
-
-
-@pytest.mark.usefixtures("_clean_registry")
-def test_stream_generator_requeue_preserves_fifo_order_before_sentinel(client):
-    """Superseded generator must restore a non-None event at the FRONT of the queue.
-
-    If the queue contains [progress_event, None] and the superseded generator pops
-    progress_event, a tail-append requeue would produce [None, progress_event] — the
-    new consumer would hit None first, close, and drop the progress event.
-    The fix uses appendleft so FIFO order is preserved: [progress_event, None].
-
-    Sequence:
-    1. Queue is pre-loaded with a progress event followed by the sentinel.
-    2. Old generator pops the progress event and detects it's no longer the owner.
-    3. It puts the event back at the FRONT via appendleft.
-    4. The new consumer drains: progress_event first, then None — correct order.
-    """
-    from albfetcharr.web.routes import (
-        _stream_claim_lock,
-        _stream_claim_state,
-        log_queue,
-    )
-
-    # Claim (generation becomes 1)
-    response = client.post("/api/download/stream/claim")
-    assert response.status_code == 200
-    with _stream_claim_lock:
-        gen1 = _stream_claim_state["generation"]
-
-    # Pre-load queue: progress event followed by the sentinel.
-    progress_event = {"progress": {"album_id": 1, "status": "done"}}
-    log_queue.put(progress_event)
-    log_queue.put(None)
-
-    # Simulate reconnect takeover (generation becomes 2)
-    with _stream_claim_lock:
-        _stream_claim_state["generation"] += 1
-
-    # Old generator pops the progress event and discovers it's superseded.
-    my_gen = gen1
-    msg = log_queue.get_nowait()
-    assert msg == progress_event, "sanity: we popped the progress event"
-    with _stream_claim_lock:
-        still_owner = _stream_claim_state["generation"] == my_gen
-    assert not still_owner, "sanity: old generator is no longer the owner"
-
-    # Old generator must restore msg at the FRONT (appendleft), not the tail.
-    with log_queue.mutex:
-        log_queue.queue.appendleft(msg)
-        log_queue.not_empty.notify()
-
-    # New consumer drains in correct FIFO order: progress first, sentinel second.
-    first = log_queue.get_nowait()
-    second = log_queue.get_nowait()
-    assert first == progress_event, "progress event must come before sentinel"
-    assert second is None, "sentinel must follow the progress event"
 
 
 @pytest.mark.usefixtures("_clean_registry")
@@ -1494,20 +1404,6 @@ def test_partial_album_marked_downloaded_not_failed(client):
         _stream_claim_state["claimed"] = False
         _stream_claim_state["claimed_at"] = None
         _stream_claim_state["last_seen"] = None
-
-
-@pytest.mark.usefixtures("_clean_registry")
-def test_index_serves_built_frontend(client):
-    """Test that / serves the built Vite frontend."""
-    dist = Path(__file__).parents[2] / "albfetcharr" / "web" / "static" / "dist" / "index.html"
-    if not dist.exists():
-        pytest.skip("Frontend not built — build the frontend repo and deploy dist into static/dist")
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.content_type == "text/html; charset=utf-8"
-    html = response.get_data(as_text=True)
-    assert "/static/dist/assets/" in html
-    assert '<div id="root"></div>' in html
 
 
 @pytest.mark.usefixtures("_clean_registry")

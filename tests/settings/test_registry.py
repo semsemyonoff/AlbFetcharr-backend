@@ -22,26 +22,6 @@ class TestCatalogIntegrity:
         duplicates = [e for e in set(envs) if envs.count(e) > 1]
         assert not duplicates, f"Duplicate env names: {duplicates}"
 
-    def test_tier3_keys_have_session_scope(self):
-        # Every session-scoped key must be in the tier-3 set (and vice-versa below).
-        # The canonical tier-3 keys from the plan:
-        tier3_keys = {
-            "yandex_quality",
-            "yandex_lyrics_format",
-            "yandex_cover_resolution",
-            "yandex_embed_cover",
-            "yandex_skip_existing",
-            "yandex_only_music",
-            "yandex_stick_to_artist",
-            "yandex_clear_comments",
-            "ytdlp_format",
-            "ytdlp_quality",
-        }
-        for key in tier3_keys:
-            s = registry.get(key)
-            assert s is not None, f"Tier-3 key {key!r} missing from registry"
-            assert s.scope == "session", f"{key!r} must have scope='session'"
-
     def test_no_extra_session_keys(self):
         """Only the ten tier-3 keys are session-scoped."""
         expected_session = {
@@ -88,8 +68,8 @@ class TestCatalogIntegrity:
                 assert s.choices is None, f"{s.key!r} (type={s.type!r}) should have choices=None"
 
     def test_catalog_count(self):
-        """33 settings in the catalog (3 Tier-1 + 18 Tier-2 + 10 Tier-3 + 2 Tier-4)."""
-        assert len(registry.all_settings()) == 33
+        """34 settings (3 Tier-1 + 18 Tier-2 + 10 Tier-3 + 2 Tier-4 + 1 Server)."""
+        assert len(registry.all_settings()) == 34
 
 
 class TestAccessors:
@@ -130,6 +110,7 @@ class TestAccessors:
             "Download (yt-dlp)",
             "Network",
             "UI",
+            "Server",
         }
         assert set(groups.keys()) == expected_groups
 
@@ -432,3 +413,13 @@ class TestSpecificSettings:
         s = registry.get("yandex_cover_resolution")
         assert s.type == "cover_resolution"
         assert s.scope == "session"
+
+    def test_app_log_level_setting(self):
+        s = registry.get("app_log_level")
+        assert s.type == "enum"
+        assert s.choices == ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        assert s.default == "INFO"
+        assert s.env == "ALBFETCHARR_LOG_LEVEL"
+        assert s.scope == "global"
+        assert s.provider == "app"
+        assert s.group == "Server"
