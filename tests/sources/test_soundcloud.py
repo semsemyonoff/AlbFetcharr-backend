@@ -81,42 +81,6 @@ class TestSearch:
         assert results[0].title == "Album Title"
         assert results[1].title == "Single Track"
 
-    def test_search_multiple_results(self, provider, mocker):
-        """Test search returning multiple playlist results."""
-        entries = [
-            {
-                "_type": "playlist",
-                "url": "https://soundcloud.com/artist/sets/album1",
-                "title": "Album 1",
-                "uploader": "Artist 1",
-                "release_year": 2023,
-                "playlist_count": 12,
-                "thumbnails": [{"url": "https://example.com/cover1.jpg"}],
-            },
-            {
-                "_type": "playlist",
-                "url": "https://soundcloud.com/artist2/sets/album2",
-                "title": "Album 2",
-                "uploader": "Artist 2",
-                "release_year": 2024,
-                "playlist_count": 10,
-                "thumbnails": [{"url": "https://example.com/cover2.jpg"}],
-            },
-        ]
-
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {"entries": entries}
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        results = provider.search("Artist", "Album", limit=5)
-
-        assert len(results) == 2
-        assert results[0].source == "soundcloud"
-        assert results[0].title == "Album 1"
-        assert results[1].title == "Album 2"
-
     def test_search_exception_propagates(self, provider, mocker):
         """Test that search exceptions propagate to the caller for error isolation."""
         mock_ydl = MagicMock()

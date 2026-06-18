@@ -8,47 +8,6 @@ from albfetcharr.download.tags import clear_comments
 class TestClearComments:
     """Tests for clear_comments function."""
 
-    def test_clear_id3_comments(self, tmp_path, mocker):
-        """Remove ID3 comment tags from MP3 file."""
-        album_dir = tmp_path / "album"
-        album_dir.mkdir()
-
-        mp3_file = album_dir / "track.mp3"
-        mp3_file.write_bytes(b"dummy")
-
-        mock_audio = MagicMock()
-        mock_tags = {"COMM::'eng'": "value", "COMM::'rus'": "value", "TIT2": "title"}
-        mock_audio.tags = mock_tags
-
-        mock_file_fn = mocker.patch("albfetcharr.download.tags.MutagenFile")
-        mock_file_fn.return_value = mock_audio
-
-        clear_comments(album_dir)
-
-        mock_audio.save.assert_called_once()
-        assert "COMM::'eng'" not in mock_tags
-
-    def test_clear_vorbis_comments(self, tmp_path, mocker):
-        """Remove Vorbis comment tags from FLAC file."""
-        album_dir = tmp_path / "album"
-        album_dir.mkdir()
-
-        flac_file = album_dir / "track.flac"
-        flac_file.write_bytes(b"dummy")
-
-        mock_audio = MagicMock()
-        mock_tags = {"comment": ["test"], "artist": ["artist"]}
-        mock_audio.tags = mock_tags
-
-        mock_file_fn = mocker.patch("albfetcharr.download.tags.MutagenFile")
-        mock_file_fn.return_value = mock_audio
-
-        clear_comments(album_dir)
-
-        mock_audio.save.assert_called_once()
-        assert "comment" not in mock_tags
-        assert "artist" in mock_tags
-
     def test_handles_none_tags(self, tmp_path, mocker):
         """Handle files with no tags."""
         album_dir = tmp_path / "album"
@@ -138,6 +97,7 @@ class TestClearComments:
 
         clear_comments(album_dir)
 
+        mock_audio.save.assert_called_once()
         assert "COMM::'eng'" not in mock_tags
         assert "COMM::'rus'" not in mock_tags
         assert "COMM::" not in mock_tags

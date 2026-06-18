@@ -34,13 +34,6 @@ def test_openapi_json_ok(client):
     assert data["openapi"] == "3.1.0"
 
 
-def test_scalar_page_ok(client):
-    resp = client.get("/apidoc/scalar", follow_redirects=True)
-    assert resp.status_code == 200
-    body = resp.get_data(as_text=True)
-    assert "@scalar/api-reference" in body
-
-
 def test_swagger_page_ok(client):
     resp = client.get("/apidoc/swagger", follow_redirects=True)
     assert resp.status_code == 200

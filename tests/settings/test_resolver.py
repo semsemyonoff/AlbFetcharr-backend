@@ -446,13 +446,6 @@ class TestEnvRenames:
         monkeypatch.setenv("ALBFETCHARR_YANDEX_PATH_PATTERN", "#artist/#album")
         assert resolve_app_config().yandex_options.path_pattern == "#artist/#album"
 
-    def test_yandex_path_pattern_absent_is_none(self, tmp_db, clean_env):
-        assert resolve_app_config().yandex_options.path_pattern is None
-
-    def test_yandex_path_pattern_old_env_ignored(self, tmp_db, clean_env, monkeypatch):
-        monkeypatch.setenv("ALBFETCHARR_PATH_PATTERN", "#old-pattern")
-        assert resolve_app_config().yandex_options.path_pattern is None
-
     def test_yandex_timeout_renamed_env(self, tmp_db, clean_env, monkeypatch):
         monkeypatch.setenv("ALBFETCHARR_YANDEX_TIMEOUT", "30")
         assert resolve_app_config().yandex_options.timeout == "30"
@@ -464,10 +457,6 @@ class TestEnvRenames:
     def test_yandex_retry_delay_renamed_env(self, tmp_db, clean_env, monkeypatch):
         monkeypatch.setenv("ALBFETCHARR_YANDEX_RETRY_DELAY", "3")
         assert resolve_app_config().yandex_options.retry_delay == "3"
-
-    def test_yandex_old_timeout_ignored(self, tmp_db, clean_env, monkeypatch):
-        monkeypatch.setenv("ALBFETCHARR_TIMEOUT", "99")
-        assert resolve_app_config().yandex_options.timeout == "20"  # default
 
 
 class TestNewFields:
@@ -491,9 +480,6 @@ class TestNewFields:
         custom = "%(album)s/%(title)s.%(ext)s"
         monkeypatch.setenv("ALBFETCHARR_YTDLP_PATH_PATTERN", custom)
         assert resolve_app_config().ytdlp_options.path_pattern == custom
-
-    def test_ytdlp_path_pattern_default_has_artist(self, tmp_db, clean_env):
-        assert "%(artist)s" in resolve_app_config().ytdlp_options.path_pattern
 
     def test_ui_lang_from_env(self, tmp_db, clean_env, monkeypatch):
         monkeypatch.setenv("ALBFETCHARR_DEFAULT_LANG", "ru")

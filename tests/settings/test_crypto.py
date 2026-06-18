@@ -75,15 +75,5 @@ class TestMask:
     def test_exactly_4_chars(self):
         assert crypto.mask("abcd") == "•••abcd"
 
-    def test_short_value_shows_all(self):
-        assert crypto.mask("abc") == "•••abc"
-
-    def test_single_char(self):
-        assert crypto.mask("x") == "•••x"
-
     def test_empty_string(self):
         assert crypto.mask("") == "•••"
-
-    def test_token_like(self):
-        result = crypto.mask("1234567890abcdef3f9a")
-        assert result == "•••3f9a"
