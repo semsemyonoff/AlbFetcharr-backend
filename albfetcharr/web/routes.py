@@ -28,6 +28,7 @@ from albfetcharr.settings import crypto, registry, store
 from albfetcharr.settings.resolver import resolve_app_config, resolve_value
 from albfetcharr.sources import all_providers, bootstrap_default_providers, get_provider
 from albfetcharr.sources.base import Match
+from albfetcharr.version import get_versions
 from albfetcharr.web import schemas
 from albfetcharr.web.spec import api
 
@@ -208,6 +209,17 @@ def register_routes(app: Flask):
                 "encryption_enabled": crypto.is_enabled(),
             }
         )
+
+    @app.route("/api/version")
+    @api.validate(resp=SpecResponse(HTTP_200=schemas.VersionResponse), tags=["meta"])
+    def api_version():
+        """Report the running service version and bundled downloader versions.
+
+        Versions are static for the process lifetime, so the SPA fetches this
+        once (e.g. for an "About"/footer); ``albfetcharr`` is the build-time
+        APP_VERSION, ``yt_dlp``/``ymd`` are read from installed package metadata.
+        """
+        return jsonify(get_versions())
 
     @app.route("/api/sources")
     @api.validate(resp=SpecResponse(HTTP_200=schemas.SourcesResponse), tags=["sources"])

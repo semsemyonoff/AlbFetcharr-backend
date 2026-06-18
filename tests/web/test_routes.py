@@ -145,6 +145,22 @@ def test_api_health_ok(client):
 
 
 @pytest.mark.usefixtures("_clean_registry")
+def test_api_version(client):
+    """/api/version reports the service version plus bundled tool versions."""
+    from albfetcharr.version import APP_VERSION
+
+    response = client.get("/api/version")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert set(data) == {"albfetcharr", "yt_dlp", "ymd"}
+    # Service version is the build-time APP_VERSION.
+    assert data["albfetcharr"] == APP_VERSION
+    # Tool versions are read live from installed metadata — never blank.
+    assert data["yt_dlp"]
+    assert data["ymd"]
+
+
+@pytest.mark.usefixtures("_clean_registry")
 @responses.activate
 def test_api_config(client):
     """Test /api/config endpoint returns default quality."""

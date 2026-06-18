@@ -11,6 +11,16 @@ class ErrorResponse(BaseModel):
     error: str
 
 
+class VersionResponse(BaseModel):
+    """``GET /api/version`` — service version plus bundled downloader versions."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    albfetcharr: str  # build-time APP_VERSION (OpenAPI info.version)
+    yt_dlp: str  # installed yt-dlp version
+    ymd: str  # installed yandex-music-downloader version
+
+
 class ConfigResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
