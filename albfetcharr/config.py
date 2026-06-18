@@ -62,6 +62,8 @@ class YtDlpOptions:
     # of anonymous (guest) requests, which YouTube bot-gates/throttles. Configured
     # via ALBFETCHARR_YTMUSIC_OAUTH; absent/missing → anonymous (unchanged).
     ytmusic_oauth_file: str = DEFAULT_YTMUSIC_OAUTH_FILE
+    ytmusic_client_id: str | None = None
+    ytmusic_client_secret: str | None = None
 
 
 @dataclass
@@ -80,6 +82,7 @@ class AppConfig:
     yandex_token: str | None
     yandex_options: YandexOptions
     ytdlp_options: YtDlpOptions
+    enable_yandex: bool = True
     enable_youtube_music: bool = True
     enable_soundcloud: bool = True
 
@@ -111,13 +114,13 @@ def load_yandex_options() -> YandexOptions:
         skip_existing=_parse_bool(os.environ.get("ALBFETCHARR_SKIP_EXISTING", "1")),
         delay=os.environ.get("ALBFETCHARR_DELAY", "0"),
         compat_level=os.environ.get("ALBFETCHARR_COMPAT_LEVEL", "1"),
-        timeout=os.environ.get("ALBFETCHARR_TIMEOUT", "20"),
-        tries=os.environ.get("ALBFETCHARR_TRIES", "20"),
-        retry_delay=os.environ.get("ALBFETCHARR_RETRY_DELAY", "5"),
+        timeout=os.environ.get("ALBFETCHARR_YANDEX_TIMEOUT", "20"),
+        tries=os.environ.get("ALBFETCHARR_YANDEX_TRIES", "20"),
+        retry_delay=os.environ.get("ALBFETCHARR_YANDEX_RETRY_DELAY", "5"),
         stick_to_artist=_parse_bool(os.environ.get("ALBFETCHARR_STICK_TO_ARTIST", "0")),
         only_music=_parse_bool(os.environ.get("ALBFETCHARR_ONLY_MUSIC", "0")),
         unsafe_path=_parse_bool(os.environ.get("ALBFETCHARR_UNSAFE_PATH", "0")),
-        path_pattern=os.environ.get("ALBFETCHARR_PATH_PATTERN") or None,
+        path_pattern=os.environ.get("ALBFETCHARR_YANDEX_PATH_PATTERN") or None,
         download_dir=os.environ.get("DOWNLOAD_DIR", "/downloads"),
         clear_comments=_parse_bool(os.environ.get("ALBFETCHARR_CLEAR_COMMENTS", "0")),
     )
@@ -129,11 +132,17 @@ def load_ytdlp_options() -> YtDlpOptions:
         download_dir=os.environ.get("DOWNLOAD_DIR", "/downloads"),
         audio_format=os.environ.get("ALBFETCHARR_YTDLP_FORMAT", "flac"),
         audio_quality=_parse_int(os.environ.get("ALBFETCHARR_YTDLP_QUALITY"), default=192),
+        path_pattern=(
+            os.environ.get("ALBFETCHARR_YTDLP_PATH_PATTERN")
+            or "%(artist)s/%(album)s/%(track_number)02d - %(title)s.%(ext)s"
+        ),
         cookies_file=os.environ.get("ALBFETCHARR_YTDLP_COOKIES") or None,
         download_retries=max(1, _parse_int(os.environ.get("ALBFETCHARR_YTDLP_RETRIES"), default=3)),
         ytmusic_oauth_file=(
             os.environ.get("ALBFETCHARR_YTMUSIC_OAUTH") or DEFAULT_YTMUSIC_OAUTH_FILE
         ),
+        ytmusic_client_id=os.environ.get("ALBFETCHARR_YTMUSIC_CLIENT_ID") or None,
+        ytmusic_client_secret=os.environ.get("ALBFETCHARR_YTMUSIC_CLIENT_SECRET") or None,
     )
 
 
@@ -169,6 +178,7 @@ def load_app_config() -> AppConfig:
         yandex_token=os.environ.get("YANDEX_MUSIC_TOKEN"),
         yandex_options=load_yandex_options(),
         ytdlp_options=load_ytdlp_options(),
-        enable_youtube_music=os.environ.get("ALBFETCHARR_ENABLE_YOUTUBE_MUSIC", "1") != "0",
-        enable_soundcloud=os.environ.get("ALBFETCHARR_ENABLE_SOUNDCLOUD", "1") != "0",
+        enable_yandex=_parse_bool(os.environ.get("ALBFETCHARR_ENABLE_YANDEX", "1")),
+        enable_youtube_music=_parse_bool(os.environ.get("ALBFETCHARR_ENABLE_YOUTUBE_MUSIC", "1")),
+        enable_soundcloud=_parse_bool(os.environ.get("ALBFETCHARR_ENABLE_SOUNDCLOUD", "1")),
     )
