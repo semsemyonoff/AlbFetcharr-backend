@@ -27,6 +27,7 @@ dependencies = [
     # (--remote-components) is needed at runtime.
     "yt-dlp-ejs==0.8.0",
     "yandex-music-downloader @ https://github.com/llistochek/yandex-music-downloader/archive/refs/tags/v3.5.5.zip",
+    "cryptography",
 ]
 
 [project.optional-dependencies]
