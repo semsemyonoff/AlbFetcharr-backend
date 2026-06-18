@@ -4,6 +4,15 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _temp_settings_db(tmp_path, monkeypatch):
+    """Point ALBFETCHARR_DB_PATH at a per-test temp file.
+
+    Ensures resolve_app_config() works in route tests without needing /config/.
+    """
+    monkeypatch.setenv("ALBFETCHARR_DB_PATH", str(tmp_path / "settings.db"))
+
+
+@pytest.fixture(autouse=True)
 def _clean_stream_state():
     """Reset shared SSE stream state before and after each test."""
     from albfetcharr.web.routes import (

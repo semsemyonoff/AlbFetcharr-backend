@@ -15,6 +15,7 @@ import os
 from albfetcharr.config import (
     AppConfig,
     LidarrConfig,
+    UIDefaults,
     YandexOptions,
     YtDlpOptions,
     _parse_bool,
@@ -152,11 +153,17 @@ def resolve_app_config(session_overrides: dict[str, str] | None = None) -> AppCo
         ytmusic_client_secret=rv("ytmusic_client_secret"),  # type: ignore[arg-type]
     )
 
+    ui = UIDefaults(
+        language=str(rv("default_lang")),
+        theme=str(rv("default_theme")),
+    )
+
     return AppConfig(
         lidarr=lidarr,
         yandex_token=rv("yandex_token"),  # type: ignore[arg-type]
         yandex_options=yandex_opts,
         ytdlp_options=ytdlp_opts,
+        ui_defaults=ui,
         enable_yandex=bool(rv("enable_yandex")),
         enable_youtube_music=bool(rv("enable_youtube_music")),
         enable_soundcloud=bool(rv("enable_soundcloud")),

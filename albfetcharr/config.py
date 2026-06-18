@@ -2,7 +2,7 @@
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 logger = logging.getLogger("albfetcharr")
 
@@ -82,6 +82,9 @@ class AppConfig:
     yandex_token: str | None
     yandex_options: YandexOptions
     ytdlp_options: YtDlpOptions
+    ui_defaults: UIDefaults = field(
+        default_factory=lambda: UIDefaults(language="en", theme="system")
+    )
     enable_yandex: bool = True
     enable_youtube_music: bool = True
     enable_soundcloud: bool = True

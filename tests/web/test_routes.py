@@ -1195,13 +1195,13 @@ def test_done_emitted_directly_when_import_path_unset(client):
         ]
     }
 
-    # Mock load_lidarr_config with empty import_path
-    with patch("albfetcharr.web.routes.load_lidarr_config") as mock_config:
-        mock_cfg = MagicMock()
-        mock_cfg.base_url = "http://lidarr.test"
-        mock_cfg.api_key = "test_key"
-        mock_cfg.import_path = ""
-        mock_config.return_value = mock_cfg
+    with patch("albfetcharr.web.routes.resolve_app_config") as mock_resolve:
+        mock_app_cfg = MagicMock()
+        mock_app_cfg.lidarr.base_url = "http://lidarr.test"
+        mock_app_cfg.lidarr.api_key = "test_key"
+        mock_app_cfg.lidarr.import_path = ""
+        mock_app_cfg.yandex_options.clear_comments = False
+        mock_resolve.return_value = mock_app_cfg
 
         with patch.dict(
             "os.environ",
@@ -1446,12 +1446,13 @@ def test_partial_album_marked_downloaded_not_failed(client):
         ]
     }
     # Import disabled so the terminal state is the downloaded/partial event.
-    with patch("albfetcharr.web.routes.load_lidarr_config") as mock_config:
-        mock_cfg = MagicMock()
-        mock_cfg.base_url = "http://lidarr.test"
-        mock_cfg.api_key = "test_key"
-        mock_cfg.import_path = ""
-        mock_config.return_value = mock_cfg
+    with patch("albfetcharr.web.routes.resolve_app_config") as mock_resolve:
+        mock_app_cfg = MagicMock()
+        mock_app_cfg.lidarr.base_url = "http://lidarr.test"
+        mock_app_cfg.lidarr.api_key = "test_key"
+        mock_app_cfg.lidarr.import_path = ""
+        mock_app_cfg.yandex_options.clear_comments = False
+        mock_resolve.return_value = mock_app_cfg
         events = _collect_stream_events(test_client, payload)
 
     progress_events = [e["progress"] for e in events if "progress" in e]
@@ -1495,3 +1496,60 @@ def test_index_returns_helpful_error_when_dist_missing(client):
         msg = response.get_data(as_text=True)
         assert "Frontend not built" in msg
         assert "npm run build" in msg
+
+
+@pytest.mark.usefixtures("_clean_registry")
+def test_api_config_uses_resolve_app_config(client):
+    """Test /api/config reads all four fields from resolve_app_config, not load_* helpers."""
+    with patch("albfetcharr.web.routes.resolve_app_config") as mock_resolve:
+        mock_cfg = MagicMock()
+        mock_cfg.yandex_options.quality = "1"
+        mock_cfg.ui_defaults.language = "ru"
+        mock_cfg.ui_defaults.theme = "dark"
+        mock_cfg.lidarr.import_path = "/import"
+        mock_resolve.return_value = mock_cfg
+
+        response = client.get("/api/config")
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["default_quality"] == 1
+    assert data["default_lang"] == "ru"
+    assert data["default_theme"] == "dark"
+    assert data["import_enabled"] is True
+
+
+@pytest.mark.usefixtures("_clean_registry")
+@responses.activate
+def test_api_wanted_uses_resolved_lidarr_config(client):
+    """Test /api/wanted resolves lidarr config via resolve_app_config."""
+    responses.add(
+        responses.GET,
+        "http://lidarr.resolved/api/v1/wanted/missing",
+        json={"records": [], "totalRecords": 0},
+        status=200,
+    )
+    responses.add(
+        responses.GET,
+        "http://lidarr.resolved/api/v1/rootfolder",
+        json=[],
+        status=200,
+    )
+    responses.add(
+        responses.GET,
+        "http://lidarr.resolved/api/v1/artist",
+        json=[],
+        status=200,
+    )
+
+    with patch("albfetcharr.web.routes.resolve_app_config") as mock_resolve:
+        mock_cfg = MagicMock()
+        mock_cfg.lidarr.base_url = "http://lidarr.resolved"
+        mock_cfg.lidarr.api_key = "resolved_key"
+        mock_resolve.return_value = mock_cfg
+
+        with patch.dict("os.environ", {"DOWNLOAD_DIR": "/downloads"}):
+            response = client.get("/api/wanted")
+
+    assert response.status_code == 200
+    assert isinstance(response.get_json(), list)

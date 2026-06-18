@@ -12,7 +12,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, Response, jsonify, request
 from spectree import Response as SpecResponse
 
-from albfetcharr.config import load_lidarr_config, load_ui_defaults, load_yandex_options
 from albfetcharr.download.locator import check_album_status, find_album_dir
 from albfetcharr.download.tags import clear_comments
 from albfetcharr.lidarr.client import (
@@ -23,6 +22,7 @@ from albfetcharr.lidarr.client import (
     get_wanted_albums,
 )
 from albfetcharr.lidarr.importer import post_import_cleanup, run_import
+from albfetcharr.settings.resolver import resolve_app_config
 from albfetcharr.sources import all_providers, get_provider
 from albfetcharr.sources.base import Match
 from albfetcharr.web import schemas
@@ -86,19 +86,17 @@ def register_routes(app: Flask):
     @app.route("/api/config")
     @api.validate(resp=SpecResponse(HTTP_200=schemas.ConfigResponse), tags=["config"])
     def api_config():
-        opts = load_yandex_options()
+        cfg = resolve_app_config()
         try:
-            default_quality = int(opts.quality)
+            default_quality = int(cfg.yandex_options.quality)
         except (ValueError, TypeError):
             default_quality = 2
-        ui_defaults = load_ui_defaults()
-        lidarr_cfg = load_lidarr_config()
         return jsonify(
             {
                 "default_quality": default_quality,
-                "default_lang": ui_defaults.language,
-                "default_theme": ui_defaults.theme,
-                "import_enabled": bool(lidarr_cfg.import_path),
+                "default_lang": cfg.ui_defaults.language,
+                "default_theme": cfg.ui_defaults.theme,
+                "import_enabled": bool(cfg.lidarr.import_path),
             }
         )
 
@@ -114,7 +112,7 @@ def register_routes(app: Flask):
         tags=["wanted"],
     )
     def api_wanted():
-        cfg = load_lidarr_config()
+        cfg = resolve_app_config().lidarr
         try:
             albums = get_wanted_albums(cfg.base_url, cfg.api_key)
         except Exception as e:
@@ -368,7 +366,8 @@ def register_routes(app: Flask):
 
         def run_downloads():
             try:
-                cfg = load_lidarr_config()
+                app_cfg = resolve_app_config()
+                cfg = app_cfg.lidarr
                 download_dir = os.environ.get("DOWNLOAD_DIR", "/downloads")
                 downloaded = []
 
@@ -479,7 +478,7 @@ def register_routes(app: Flask):
                         continue
 
                     if success:
-                        if source == "yandex" and load_yandex_options().clear_comments:
+                        if source == "yandex" and app_cfg.yandex_options.clear_comments:
                             album_dir = find_album_dir(download_dir, artist, title)
                             if album_dir:
                                 log("  Clearing comments tags...")
