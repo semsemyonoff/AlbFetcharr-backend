@@ -124,3 +124,25 @@ class ClaimResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     claimed: bool
+
+
+class SettingItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    key: str
+    group: str
+    type: str
+    scope: str
+    secret: bool
+    source: str  # "db" | "env" | "default"
+    value: str | None = None  # non-secrets only
+    is_set: bool = False
+    preview: str | None = None  # secrets only — masked
+
+
+class SettingsResponse(RootModel[list[SettingItem]]):
+    pass
+
+
+class SettingsUpdateRequest(RootModel[dict[str, str]]):
+    pass

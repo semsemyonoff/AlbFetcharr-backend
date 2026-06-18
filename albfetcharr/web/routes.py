@@ -23,8 +23,9 @@ from albfetcharr.lidarr.client import (
 )
 from albfetcharr.lidarr.importer import post_import_cleanup, run_import
 from albfetcharr.lidarr.library_map import parse_library_map_str
-from albfetcharr.settings.resolver import resolve_app_config
-from albfetcharr.sources import all_providers, get_provider
+from albfetcharr.settings import crypto, registry, store
+from albfetcharr.settings.resolver import resolve_app_config, resolve_value
+from albfetcharr.sources import all_providers, bootstrap_default_providers, get_provider
 from albfetcharr.sources.base import Match
 from albfetcharr.web import schemas
 from albfetcharr.web.spec import api
@@ -63,6 +64,68 @@ _handoff_condition = threading.Condition()
 def log(msg: str | None):
     """Add message to the log queue."""
     log_queue.put(msg)
+
+
+def _build_settings_items() -> list[dict]:
+    """Build the list of setting items for settings API responses."""
+    snapshot = store.all_raw()
+    items = []
+    for s in registry.all_settings():
+        if s.key in snapshot:
+            source = "db"
+        elif os.environ.get(s.env) is not None:
+            source = "env"
+        else:
+            source = "default"
+
+        if s.secret:
+            if source == "db":
+                raw_db, _ = snapshot[s.key]
+                decrypted = crypto.decrypt(raw_db)
+                is_set = True
+                preview = crypto.mask(decrypted) if decrypted else None
+            elif source == "env":
+                env_val = os.environ.get(s.env, "")
+                is_set = bool(env_val)
+                preview = crypto.mask(env_val) if env_val else None
+            else:
+                is_set = False
+                preview = None
+            items.append(
+                {
+                    "key": s.key,
+                    "group": s.group,
+                    "type": s.type,
+                    "scope": s.scope,
+                    "secret": True,
+                    "source": source,
+                    "is_set": is_set,
+                    "preview": preview,
+                    "value": None,
+                }
+            )
+        else:
+            resolved = resolve_value(s, None, snapshot)
+            if resolved is None:
+                value_str = None
+            elif isinstance(resolved, bool):
+                value_str = "1" if resolved else "0"
+            else:
+                value_str = str(resolved)
+            items.append(
+                {
+                    "key": s.key,
+                    "group": s.group,
+                    "type": s.type,
+                    "scope": s.scope,
+                    "secret": False,
+                    "source": source,
+                    "is_set": source != "default",
+                    "value": value_str,
+                    "preview": None,
+                }
+            )
+    return items
 
 
 def register_routes(app: Flask):
@@ -106,6 +169,64 @@ def register_routes(app: Flask):
     def api_sources():
         providers = all_providers()
         return jsonify([{"id": p.id, "name": p.name} for p in providers])
+
+    @app.route("/api/settings")
+    @api.validate(resp=SpecResponse(HTTP_200=schemas.SettingsResponse), tags=["settings"])
+    def api_settings_get():
+        return jsonify(_build_settings_items())
+
+    @app.route("/api/settings", methods=["PUT"])
+    @api.validate(
+        json=schemas.SettingsUpdateRequest,
+        resp=SpecResponse(
+            HTTP_200=schemas.SettingsResponse,
+            HTTP_400=schemas.ErrorResponse,
+            HTTP_422=schemas.ErrorResponse,
+        ),
+        tags=["settings"],
+    )
+    def api_settings_put():
+        body = request.context.json
+        if body is None:
+            return jsonify({"error": "Request body must be JSON"}), 415
+        updates = body.root
+
+        for key, value in updates.items():
+            s = registry.get(key)
+            if s is None:
+                return jsonify({"error": f"Unknown setting: {key!r}"}), 400
+            if s.secret and not crypto.is_enabled():
+                return jsonify({"error": "set ALBFETCHARR_SECRET_KEY to store secrets"}), 400
+            try:
+                registry.validate_value(s, str(value))
+            except ValueError as e:
+                return jsonify({"error": str(e)}), 422
+
+        for key, value in updates.items():
+            s = registry.get(key)
+            if s.secret:
+                store.set_raw(key, crypto.encrypt(str(value)), is_secret=True)
+            else:
+                store.set_raw(key, str(value), is_secret=False)
+
+        bootstrap_default_providers()
+        return jsonify(_build_settings_items())
+
+    @app.route("/api/settings/<key>", methods=["DELETE"])
+    @api.validate(
+        resp=SpecResponse(
+            HTTP_200=schemas.SettingsResponse,
+            HTTP_404=schemas.ErrorResponse,
+        ),
+        tags=["settings"],
+    )
+    def api_settings_delete(key: str):
+        s = registry.get(key)
+        if s is None:
+            return jsonify({"error": f"Unknown setting: {key!r}"}), 404
+        store.delete(key)
+        bootstrap_default_providers()
+        return jsonify(_build_settings_items())
 
     @app.route("/api/wanted")
     @api.validate(
