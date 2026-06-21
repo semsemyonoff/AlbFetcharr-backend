@@ -24,6 +24,7 @@ class Setting:
     provider: str  # "yandex" | "ytdlp" | "lidarr" | "app" | "ui"
     min_val: int | None = field(default=None)  # for type="int" range checks
     max_val: int | None = field(default=None)
+    readonly: bool = field(default=False)  # True = env/container-set; PUT rejects
 
 
 # fmt: off
@@ -35,11 +36,11 @@ _CATALOG: list[Setting] = [
 
     # ── Tier 2 — global, non-secret ─────────────────────────────────────────
     Setting("lidarr_url",            "str",  "",      None,                          "LIDARR_URL",                        "global",  False, "Lidarr",            "lidarr"),
-    Setting("lidarr_import_path",    "str",  "",      None,                          "ALBFETCHARR_LIDARR_IMPORT_PATH",    "global",  False, "Lidarr",            "lidarr"),
-    Setting("library_map",           "str",  None,    None,                          "ALBFETCHARR_LIBRARY_MAP",           "global",  False, "Lidarr",            "lidarr"),
+    Setting("lidarr_import_path",    "str",  "",      None,                          "ALBFETCHARR_LIDARR_IMPORT_PATH",    "global",  False, "Lidarr",            "lidarr", readonly=True),
+    Setting("library_map",           "str",  None,    None,                          "ALBFETCHARR_LIBRARY_MAP",           "global",  False, "Lidarr",            "lidarr", readonly=True),
     Setting("ytmusic_client_id",     "str",  None,    None,                          "ALBFETCHARR_YTMUSIC_CLIENT_ID",     "global",  False, "Sources",           "ytdlp"),
-    Setting("ytmusic_oauth_file",    "str",  "/config/ytmusic_oauth.json", None,     "ALBFETCHARR_YTMUSIC_OAUTH",         "global",  False, "Sources",           "ytdlp"),
-    Setting("ytdlp_cookies_file",    "str",  None,    None,                          "ALBFETCHARR_YTDLP_COOKIES",         "global",  False, "Sources",           "ytdlp"),
+    Setting("ytmusic_oauth_file",    "str",  "/config/ytmusic_oauth.json", None,     "ALBFETCHARR_YTMUSIC_OAUTH",         "global",  False, "Sources",           "ytdlp", readonly=True),
+    Setting("ytdlp_cookies_file",    "str",  None,    None,                          "ALBFETCHARR_YTDLP_COOKIES",         "global",  False, "Sources",           "ytdlp", readonly=True),
     Setting("enable_yandex",         "bool", "1",     None,                          "ALBFETCHARR_ENABLE_YANDEX",         "global",  False, "Sources",           "app"),
     Setting("enable_youtube_music",  "bool", "1",     None,                          "ALBFETCHARR_ENABLE_YOUTUBE_MUSIC",  "global",  False, "Sources",           "app"),
     Setting("enable_soundcloud",     "bool", "1",     None,                          "ALBFETCHARR_ENABLE_SOUNDCLOUD",     "global",  False, "Sources",           "app"),
@@ -104,6 +105,12 @@ def is_session_key(key: str) -> bool:
     """True iff `key` is in the registry and session-scoped."""
     s = _BY_KEY.get(key)
     return s is not None and s.scope == "session"
+
+
+def is_readonly(key: str) -> bool:
+    """True iff `key` is in the registry and marked readonly (env/container-only)."""
+    s = _BY_KEY.get(key)
+    return s is not None and s.readonly
 
 
 def validate_value(setting: Setting, raw: str) -> None:

@@ -421,3 +421,38 @@ class TestSpecificSettings:
         assert s.scope == "global"
         assert s.provider == "app"
         assert s.group == "Server"
+
+
+class TestReadonlyFlag:
+    """The four container-setup keys are readonly; everything else is not."""
+
+    READONLY_KEYS = {
+        "ytmusic_oauth_file",
+        "ytdlp_cookies_file",
+        "lidarr_import_path",
+        "library_map",
+    }
+
+    def test_readonly_keys_are_marked(self):
+        for key in self.READONLY_KEYS:
+            s = registry.get(key)
+            assert s is not None, f"{key!r} missing from registry"
+            assert s.readonly is True, f"{key!r} should be readonly"
+
+    def test_non_readonly_keys(self):
+        for s in registry.all_settings():
+            if s.key not in self.READONLY_KEYS:
+                assert s.readonly is False, f"{s.key!r} should not be readonly"
+
+    def test_is_readonly_true_for_readonly_keys(self):
+        for key in self.READONLY_KEYS:
+            assert registry.is_readonly(key) is True, f"is_readonly({key!r}) should be True"
+
+    def test_is_readonly_false_for_regular_keys(self):
+        assert registry.is_readonly("yandex_token") is False
+        assert registry.is_readonly("ytdlp_format") is False
+        assert registry.is_readonly("lidarr_url") is False
+        assert registry.is_readonly("default_lang") is False
+
+    def test_is_readonly_false_for_missing_key(self):
+        assert registry.is_readonly("nonexistent") is False
