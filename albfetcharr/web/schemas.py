@@ -170,6 +170,8 @@ class SettingItem(BaseModel):
     value: str | None = None  # non-secrets only
     is_set: bool = False
     preview: str | None = None  # secrets only — masked
+    readonly: bool = False
+    file_status: str | None = None  # for ytmusic_oauth_file / ytdlp_cookies_file only
 
 
 class SettingsResponse(RootModel[list[SettingItem]]):

@@ -24,6 +24,7 @@ from albfetcharr.lidarr.importer import post_import_cleanup, run_import
 from albfetcharr.lidarr.library_map import parse_library_map_str
 from albfetcharr.logging_config import set_level
 from albfetcharr.settings import crypto, registry, store
+from albfetcharr.settings.file_status import cookies_file_status, oauth_file_status
 from albfetcharr.settings.resolver import resolve_app_config, resolve_value
 from albfetcharr.sources import all_providers, bootstrap_default_providers, get_provider
 from albfetcharr.sources.base import Match
@@ -135,6 +136,8 @@ def _build_settings_items() -> list[dict]:
                     "is_set": is_set,
                     "preview": preview,
                     "value": None,
+                    "readonly": s.readonly,
+                    "file_status": None,
                 }
             )
         else:
@@ -145,6 +148,14 @@ def _build_settings_items() -> list[dict]:
                 value_str = "1" if resolved else "0"
             else:
                 value_str = str(resolved)
+
+            # Compute file_status for the two path-type readonly keys.
+            file_status: str | None = None
+            if s.key == "ytmusic_oauth_file":
+                file_status = oauth_file_status(value_str)
+            elif s.key == "ytdlp_cookies_file":
+                file_status = cookies_file_status(value_str)
+
             items.append(
                 {
                     "key": s.key,
@@ -156,6 +167,8 @@ def _build_settings_items() -> list[dict]:
                     "is_set": source != "default",
                     "value": value_str,
                     "preview": None,
+                    "readonly": s.readonly,
+                    "file_status": file_status,
                 }
             )
     return items
@@ -274,6 +287,10 @@ def register_routes(app: Flask):
             s = registry.get(key)
             if s is None:
                 return jsonify({"error": f"Unknown setting: {key!r}"}), 400
+            if s.readonly:
+                return jsonify(
+                    {"error": f"Setting {key!r} is read-only (set at container setup)"}
+                ), 400
             if s.secret and not crypto.is_enabled():
                 return jsonify({"error": "set ALBFETCHARR_SECRET_KEY to store secrets"}), 400
             try:
@@ -305,6 +322,10 @@ def register_routes(app: Flask):
 
         Removes the stored override for the key; the value then falls back to its
         env var or hardcoded default. Re-bootstraps providers like PUT.
+
+        Readonly keys are intentionally allowed to be deleted: a previously
+        DB-saved library_map or lidarr_import_path (written by an older UI build)
+        can be cleared so the env value takes over without restarting the container.
         """
         s = registry.get(key)
         if s is None:

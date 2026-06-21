@@ -369,3 +369,181 @@ def test_put_yandex_token_registers_yandex_source(client, monkeypatch):
 
     sources_after = client.get("/api/sources").get_json()
     assert any(s["id"] == "yandex" for s in sources_after)
+
+
+# ── readonly field ─────────────────────────────────────────────────────────────
+
+_READONLY_KEYS = {"ytmusic_oauth_file", "ytdlp_cookies_file", "lidarr_import_path", "library_map"}
+_WRITABLE_SAMPLE = "default_lang"
+
+
+def test_get_settings_readonly_field_present(client):
+    """GET /api/settings includes a readonly bool on every item."""
+    resp = client.get("/api/settings")
+    data = resp.get_json()
+    assert all("readonly" in item for item in data)
+
+
+def test_get_settings_readonly_keys_flagged_true(client):
+    """The four container-setup keys report readonly=True."""
+    resp = client.get("/api/settings")
+    data = resp.get_json()
+    key_map = {item["key"]: item for item in data}
+    for k in _READONLY_KEYS:
+        assert key_map[k]["readonly"] is True, f"{k} should be readonly"
+
+
+def test_get_settings_writable_keys_flagged_false(client):
+    """Non-readonly keys report readonly=False."""
+    resp = client.get("/api/settings")
+    data = resp.get_json()
+    key_map = {item["key"]: item for item in data}
+    assert key_map[_WRITABLE_SAMPLE]["readonly"] is False
+
+
+def test_put_readonly_key_returns_400(client):
+    """PUT on a readonly key is rejected with 400."""
+    for key in _READONLY_KEYS:
+        resp = client.put(
+            "/api/settings",
+            data=json.dumps({key: "/some/path"}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 400, (
+            f"expected 400 for readonly key {key!r}, got {resp.status_code}"
+        )
+        err = resp.get_json()
+        assert "read-only" in err["error"].lower() or "readonly" in err["error"].lower()
+
+
+def test_put_readonly_key_batch_with_valid_key_returns_400(client):
+    """A batch PUT containing a readonly key is rejected even when a valid key is also present."""
+    resp = client.put(
+        "/api/settings",
+        data=json.dumps({"default_lang": "en", "lidarr_import_path": "/data/import"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+
+
+def test_delete_readonly_key_succeeds(client):
+    """DELETE on a readonly key is allowed — it clears a previously DB-saved value."""
+    from albfetcharr.settings import store
+
+    store.set_raw("lidarr_import_path", "/old/value", is_secret=False)
+    resp = client.delete("/api/settings/lidarr_import_path")
+    assert resp.status_code == 200
+
+
+# ── file_status field ──────────────────────────────────────────────────────────
+
+
+def test_get_settings_file_status_field_present(client):
+    """GET /api/settings includes a file_status key on every item (None for most)."""
+    resp = client.get("/api/settings")
+    data = resp.get_json()
+    assert all("file_status" in item for item in data)
+
+
+def test_get_settings_oauth_file_status_missing(client, tmp_path):
+    """OAuth file_status is 'missing' when the configured path does not exist."""
+    import pytest
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setenv("ALBFETCHARR_YTMUSIC_OAUTH", str(tmp_path / "no_such_file.json"))
+        resp = client.get("/api/settings")
+    data = resp.get_json()
+    item = next(i for i in data if i["key"] == "ytmusic_oauth_file")
+    assert item["file_status"] == "missing"
+
+
+def test_get_settings_oauth_file_status_ok(client, tmp_path):
+    """OAuth file_status is 'ok' when the configured path points at a valid JSON file."""
+    import pytest
+
+    oauth_file = tmp_path / "oauth.json"
+    oauth_file.write_text('{"access_token": "tok"}')
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setenv("ALBFETCHARR_YTMUSIC_OAUTH", str(oauth_file))
+        resp = client.get("/api/settings")
+    data = resp.get_json()
+    item = next(i for i in data if i["key"] == "ytmusic_oauth_file")
+    assert item["file_status"] == "ok"
+
+
+def test_get_settings_oauth_file_status_invalid(client, tmp_path):
+    """OAuth file_status is 'invalid' when the file exists but is not valid JSON."""
+    import pytest
+
+    bad_file = tmp_path / "bad.json"
+    bad_file.write_text("not json {{{")
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setenv("ALBFETCHARR_YTMUSIC_OAUTH", str(bad_file))
+        resp = client.get("/api/settings")
+    data = resp.get_json()
+    item = next(i for i in data if i["key"] == "ytmusic_oauth_file")
+    assert item["file_status"] == "invalid"
+
+
+def test_get_settings_cookies_file_status_missing(client, tmp_path):
+    """Cookies file_status is 'missing' when the path does not exist."""
+    import pytest
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setenv("ALBFETCHARR_YTDLP_COOKIES", str(tmp_path / "cookies.txt"))
+        resp = client.get("/api/settings")
+    data = resp.get_json()
+    item = next(i for i in data if i["key"] == "ytdlp_cookies_file")
+    assert item["file_status"] == "missing"
+
+
+def test_get_settings_cookies_file_status_found(client, tmp_path):
+    """Cookies file_status is 'found' when the path points at an existing file."""
+    import pytest
+
+    cookies_file = tmp_path / "cookies.txt"
+    cookies_file.write_text("# Netscape HTTP Cookie File\n")
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setenv("ALBFETCHARR_YTDLP_COOKIES", str(cookies_file))
+        resp = client.get("/api/settings")
+    data = resp.get_json()
+    item = next(i for i in data if i["key"] == "ytdlp_cookies_file")
+    assert item["file_status"] == "found"
+
+
+def test_get_settings_non_file_keys_have_null_file_status(client):
+    """Non-file-path settings have file_status=None."""
+    resp = client.get("/api/settings")
+    data = resp.get_json()
+    for item in data:
+        if item["key"] not in ("ytmusic_oauth_file", "ytdlp_cookies_file"):
+            assert item["file_status"] is None, (
+                f"{item['key']} should have file_status=None, got {item['file_status']!r}"
+            )
+
+
+def test_put_response_includes_readonly_and_file_status(client):
+    """PUT response also carries readonly and file_status on each item."""
+    resp = client.put(
+        "/api/settings",
+        data=json.dumps({"default_lang": "ru"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert all("readonly" in item for item in data)
+    assert all("file_status" in item for item in data)
+
+
+def test_delete_response_includes_readonly_and_file_status(client):
+    """DELETE response also carries readonly and file_status on each item."""
+    client.put(
+        "/api/settings",
+        data=json.dumps({"default_theme": "dark"}),
+        content_type="application/json",
+    )
+    resp = client.delete("/api/settings/default_theme")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert all("readonly" in item for item in data)
+    assert all("file_status" in item for item in data)
