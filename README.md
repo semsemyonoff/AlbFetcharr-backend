@@ -333,7 +333,7 @@ docker compose run --rm albfetcharr download --source soundcloud "https://soundc
    | `YAMDARR_STICK_TO_ARTIST` | `ALBFETCHARR_STICK_TO_ARTIST` |
    | `YAMDARR_ONLY_MUSIC` | `ALBFETCHARR_ONLY_MUSIC` |
    | `YAMDARR_COMPAT_LEVEL` | `ALBFETCHARR_COMPAT_LEVEL` |
-   | `YAMDARR_PATH_PATTERN` | `ALBFETCHARR_YANDEX_PATH_PATTERN` |
+   | `YAMDARR_PATH_PATTERN` | — (шаблон пути больше не настраивается — зашит в код, см. выше) |
    | `YAMDARR_UNSAFE_PATH` | `ALBFETCHARR_UNSAFE_PATH` |
    | `YAMDARR_TIMEOUT` | `ALBFETCHARR_YANDEX_TIMEOUT` |
    | `YAMDARR_TRIES` | `ALBFETCHARR_YANDEX_TRIES` |
