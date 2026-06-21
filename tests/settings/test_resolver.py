@@ -72,7 +72,7 @@ class TestResolveValuePrecedence:
     def test_default_used_when_nothing_else(self, clean_env):
         s = registry.get("ytdlp_format")
         result = resolve_value(s, None, {})
-        assert result == "flac"
+        assert result == "opus"
 
     def test_session_override_ignored_for_global_key(self):
         """Session overrides must not apply to global-only keys."""
@@ -135,11 +135,6 @@ class TestResolveValueNullableStr:
 
     def test_yandex_token_absent_is_none(self, clean_env):
         s = registry.get("yandex_token")
-        result = resolve_value(s, None, {})
-        assert result is None
-
-    def test_yandex_path_pattern_absent_is_none(self, clean_env):
-        s = registry.get("yandex_path_pattern")
         result = resolve_value(s, None, {})
         assert result is None
 
@@ -237,7 +232,7 @@ class TestResolveAppConfigDefaults:
 
     def test_ytdlp_format_default(self, tmp_db, clean_env):
         cfg = resolve_app_config()
-        assert cfg.ytdlp_options.audio_format == "flac"
+        assert cfg.ytdlp_options.audio_format == "opus"
 
     def test_ytdlp_quality_default(self, tmp_db, clean_env):
         cfg = resolve_app_config()
@@ -360,11 +355,11 @@ class TestResolveAppConfigSessionLayer:
 
     def test_empty_overrides_uses_defaults(self, tmp_db, clean_env):
         cfg = resolve_app_config(session_overrides={})
-        assert cfg.ytdlp_options.audio_format == "flac"
+        assert cfg.ytdlp_options.audio_format == "opus"
 
     def test_none_overrides_uses_defaults(self, tmp_db, clean_env):
         cfg = resolve_app_config(session_overrides=None)
-        assert cfg.ytdlp_options.audio_format == "flac"
+        assert cfg.ytdlp_options.audio_format == "opus"
 
 
 class TestResolveAppConfigSecretFromDb:
@@ -451,10 +446,6 @@ class TestEnableToggles:
 class TestEnvRenames:
     """Renamed env vars are honored (re-homed from test_config.py)."""
 
-    def test_yandex_path_pattern_new_env(self, tmp_db, clean_env, monkeypatch):
-        monkeypatch.setenv("ALBFETCHARR_YANDEX_PATH_PATTERN", "#artist/#album")
-        assert resolve_app_config().yandex_options.path_pattern == "#artist/#album"
-
     def test_yandex_timeout_renamed_env(self, tmp_db, clean_env, monkeypatch):
         monkeypatch.setenv("ALBFETCHARR_YANDEX_TIMEOUT", "30")
         assert resolve_app_config().yandex_options.timeout == "30"
@@ -484,11 +475,6 @@ class TestNewFields:
 
     def test_ytmusic_client_secret_absent_is_none(self, tmp_db, clean_env):
         assert resolve_app_config().ytdlp_options.ytmusic_client_secret is None
-
-    def test_ytdlp_path_pattern_from_env(self, tmp_db, clean_env, monkeypatch):
-        custom = "%(album)s/%(title)s.%(ext)s"
-        monkeypatch.setenv("ALBFETCHARR_YTDLP_PATH_PATTERN", custom)
-        assert resolve_app_config().ytdlp_options.path_pattern == custom
 
     def test_ui_lang_from_env(self, tmp_db, clean_env, monkeypatch):
         monkeypatch.setenv("ALBFETCHARR_DEFAULT_LANG", "ru")

@@ -45,12 +45,10 @@ _CATALOG: list[Setting] = [
     Setting("enable_soundcloud",     "bool", "1",     None,                          "ALBFETCHARR_ENABLE_SOUNDCLOUD",     "global",  False, "Sources",           "app"),
     Setting("yandex_delay",          "int",  "0",     None,                          "ALBFETCHARR_DELAY",                 "global",  False, "Download (Yandex)", "yandex", min_val=0),
     Setting("yandex_compat_level",   "enum", "1",     ["0", "1"],                    "ALBFETCHARR_COMPAT_LEVEL",          "global",  False, "Download (Yandex)", "yandex"),
-    Setting("yandex_path_pattern",   "str",  None,    None,                          "ALBFETCHARR_YANDEX_PATH_PATTERN",   "global",  False, "Download (Yandex)", "yandex"),
     Setting("yandex_unsafe_path",    "bool", "0",     None,                          "ALBFETCHARR_UNSAFE_PATH",           "global",  False, "Download (Yandex)", "yandex"),
     Setting("yandex_net_timeout",    "int",  "20",    None,                          "ALBFETCHARR_YANDEX_TIMEOUT",        "global",  False, "Network",           "yandex", min_val=1),
     Setting("yandex_net_tries",      "int",  "20",    None,                          "ALBFETCHARR_YANDEX_TRIES",          "global",  False, "Network",           "yandex", min_val=1),
     Setting("yandex_net_retry_delay","int",  "5",     None,                          "ALBFETCHARR_YANDEX_RETRY_DELAY",    "global",  False, "Network",           "yandex", min_val=0),
-    Setting("ytdlp_path_pattern",    "str",  "%(artist)s/%(album)s/%(track_number)02d - %(title)s.%(ext)s", None, "ALBFETCHARR_YTDLP_PATH_PATTERN", "global", False, "Download (yt-dlp)", "ytdlp"),
     Setting("ytdlp_retries",         "int",  "3",     None,                          "ALBFETCHARR_YTDLP_RETRIES",         "global",  False, "Download (yt-dlp)", "ytdlp", min_val=1),
 
     # ── Tier 3 — session-overridable (global default in DB; per-run via overrides) ─
@@ -62,7 +60,7 @@ _CATALOG: list[Setting] = [
     Setting("yandex_only_music",     "bool", "0",     None,                          "ALBFETCHARR_ONLY_MUSIC",            "session", False, "Download (Yandex)", "yandex"),
     Setting("yandex_stick_to_artist","bool", "0",     None,                          "ALBFETCHARR_STICK_TO_ARTIST",       "session", False, "Download (Yandex)", "yandex"),
     Setting("yandex_clear_comments", "bool", "0",     None,                          "ALBFETCHARR_CLEAR_COMMENTS",        "session", False, "Download (Yandex)", "yandex"),
-    Setting("ytdlp_format",          "enum", "flac",  ["flac", "mp3", "m4a", "opus", "vorbis", "aac", "wav"], "ALBFETCHARR_YTDLP_FORMAT", "session", False, "Download (yt-dlp)", "ytdlp"),
+    Setting("ytdlp_format",          "enum", "opus",  ["best", "opus", "m4a", "mp3"], "ALBFETCHARR_YTDLP_FORMAT", "session", False, "Download (yt-dlp)", "ytdlp"),
     Setting("ytdlp_quality",         "int",  "192",   None,                          "ALBFETCHARR_YTDLP_QUALITY",         "session", False, "Download (yt-dlp)", "ytdlp", min_val=0),
 
     # ── Tier 4 — UI prefs (global default; per-browser in localStorage) ─────

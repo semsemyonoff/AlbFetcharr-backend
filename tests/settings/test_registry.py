@@ -68,8 +68,8 @@ class TestCatalogIntegrity:
                 assert s.choices is None, f"{s.key!r} (type={s.type!r}) should have choices=None"
 
     def test_catalog_count(self):
-        """34 settings (3 Tier-1 + 18 Tier-2 + 10 Tier-3 + 2 Tier-4 + 1 Server)."""
-        assert len(registry.all_settings()) == 34
+        """32 settings (3 Tier-1 + 16 Tier-2 + 10 Tier-3 + 2 Tier-4 + 1 Server)."""
+        assert len(registry.all_settings()) == 32
 
 
 class TestAccessors:
@@ -371,16 +371,11 @@ class TestSpecificSettings:
         s = registry.get("yandex_net_retry_delay")
         assert s.env == "ALBFETCHARR_YANDEX_RETRY_DELAY"
 
-    def test_yandex_path_pattern_renamed_env(self):
-        s = registry.get("yandex_path_pattern")
-        assert s.env == "ALBFETCHARR_YANDEX_PATH_PATTERN"
-        assert s.default is None
+    def test_yandex_path_pattern_removed(self):
+        assert registry.get("yandex_path_pattern") is None
 
-    def test_ytdlp_path_pattern_has_default(self):
-        s = registry.get("ytdlp_path_pattern")
-        assert "%(artist)s" in s.default
-        assert "%(ext)s" in s.default
-        assert s.env == "ALBFETCHARR_YTDLP_PATH_PATTERN"
+    def test_ytdlp_path_pattern_removed(self):
+        assert registry.get("ytdlp_path_pattern") is None
 
     def test_ytdlp_retries_min_is_1(self):
         s = registry.get("ytdlp_retries")
@@ -389,9 +384,12 @@ class TestSpecificSettings:
 
     def test_ytdlp_format_choices(self):
         s = registry.get("ytdlp_format")
-        assert "flac" in s.choices
-        assert "mp3" in s.choices
-        assert s.default == "flac"
+        assert s.choices == ["best", "opus", "m4a", "mp3"]
+        assert "flac" not in s.choices
+        assert "vorbis" not in s.choices
+        assert "aac" not in s.choices
+        assert "wav" not in s.choices
+        assert s.default == "opus"
         assert s.scope == "session"
 
     def test_default_lang_choices(self):

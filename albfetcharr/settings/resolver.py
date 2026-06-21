@@ -32,7 +32,6 @@ _NULLABLE_STR_KEYS = frozenset(
         "ytmusic_client_secret",
         "library_map",
         "ytmusic_client_id",
-        "yandex_path_pattern",
         "ytdlp_cookies_file",
     }
 )
@@ -136,7 +135,7 @@ def resolve_app_config(session_overrides: dict[str, str] | None = None) -> AppCo
         stick_to_artist=bool(rv("yandex_stick_to_artist")),
         only_music=bool(rv("yandex_only_music")),
         unsafe_path=bool(rv("yandex_unsafe_path")),
-        path_pattern=rv("yandex_path_pattern"),  # type: ignore[arg-type]
+        path_pattern=None,
         download_dir=download_dir,
         clear_comments=bool(rv("yandex_clear_comments")),
     )
@@ -145,7 +144,6 @@ def resolve_app_config(session_overrides: dict[str, str] | None = None) -> AppCo
         download_dir=download_dir,
         audio_format=str(rv("ytdlp_format")),
         audio_quality=int(rv("ytdlp_quality")),  # type: ignore[arg-type]
-        path_pattern=str(rv("ytdlp_path_pattern")),
         cookies_file=rv("ytdlp_cookies_file"),  # type: ignore[arg-type]
         download_retries=max(1, int(rv("ytdlp_retries"))),  # type: ignore[arg-type]
         ytmusic_oauth_file=str(rv("ytmusic_oauth_file")),
