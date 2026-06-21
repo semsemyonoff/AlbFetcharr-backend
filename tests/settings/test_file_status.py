@@ -30,6 +30,18 @@ class TestOauthFileStatus:
         f.write_text("")
         assert oauth_file_status(str(f)) == "invalid"
 
+    def test_invalid_when_json_is_not_an_object(self, tmp_path):
+        # Syntactically valid JSON that isn't a mapping (a list) — the client
+        # builder calls .get() on it, so it must not be reported as 'ok'.
+        f = tmp_path / "list.json"
+        f.write_text(json.dumps([]))
+        assert oauth_file_status(str(f)) == "invalid"
+
+    def test_invalid_when_json_is_a_scalar(self, tmp_path):
+        f = tmp_path / "scalar.json"
+        f.write_text(json.dumps("just a string"))
+        assert oauth_file_status(str(f)) == "invalid"
+
 
 class TestCookiesFileStatus:
     def test_missing_when_path_is_none(self):

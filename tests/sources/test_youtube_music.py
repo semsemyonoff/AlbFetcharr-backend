@@ -547,6 +547,108 @@ class TestDownload:
         urls = [c.args[0][0] for c in mock_ydl.download.call_args_list]
         assert urls == ["https://www.youtube.com/watch?v=vid2"]
 
+    def test_best_format_tags_real_produced_extension(self, provider, mocker, tmp_path):
+        """`best` is passthrough: yt-dlp produces a dynamic extension (.opus here),
+        not `.best`. Tagging must target the real file, resolved from disk."""
+        provider._opts.download_dir = str(tmp_path)
+        provider._opts.audio_format = "best"
+        album_path = tmp_path / "Lidarr Artist" / "Lidarr Album"
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, mock_ydl = _mock_ydl(mocker)
+        tags = mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        def _download(_urls):
+            album_path.mkdir(parents=True, exist_ok=True)
+            (album_path / "01 - One.opus").write_bytes(b"audio")
+
+        mock_ydl.download.side_effect = _download
+
+        assert provider.download(_dl_match(), log=None) is True
+        tagged_path = tags.call_args_list[0].args[0]
+        assert tagged_path == album_path / "01 - One.opus"
+
+    def test_best_format_skips_existing_dynamic_extension(self, provider, mocker, tmp_path):
+        """An already-present `best` track (any non-sidecar ext) is skipped, not
+        re-downloaded — the existence check can no longer look for `.best`."""
+        provider._opts.download_dir = str(tmp_path)
+        provider._opts.audio_format = "best"
+        album_path = tmp_path / "Lidarr Artist" / "Lidarr Album"
+        album_path.mkdir(parents=True)
+        (album_path / "01 - One.m4a").write_bytes(b"x")
+        _mock_ytmusic(mocker, _album_data())
+        cls, mock_ydl = _mock_ydl(mocker)
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        assert provider.download(_dl_match(), log=None) is True
+        urls = [c.args[0][0] for c in mock_ydl.download.call_args_list]
+        assert urls == ["https://www.youtube.com/watch?v=vid2"]
+
+    @pytest.mark.parametrize(
+        "leftover",
+        [
+            "01 - One.webp",  # kept thumbnail sidecar
+            "01 - One.lrc",  # lyrics sidecar
+            "01 - One.txt",  # metadata/description sidecar
+            "01 - One.json",  # info-json sidecar
+            "01 - One.opus.part",  # partial download
+            "01 - One.opus.ytdl",  # fragment info file
+            "01 - One.temp.opus",  # FFmpeg post-processing temp (final suffix .opus)
+        ],
+    )
+    def test_best_format_ignores_sidecar_files(self, provider, mocker, tmp_path, leftover):
+        """A leftover thumbnail/lyrics/metadata/partial/temp file must not count as
+        the produced track for `best`, so the track still downloads. The
+        post-processing temp (`01 - One.temp.opus`) is the tricky case: its final
+        suffix is `.opus`, yet the `.temp` infix still marks it in-progress."""
+        provider._opts.download_dir = str(tmp_path)
+        provider._opts.audio_format = "best"
+        album_path = tmp_path / "Lidarr Artist" / "Lidarr Album"
+        album_path.mkdir(parents=True)
+        (album_path / leftover).write_bytes(b"x")
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, mock_ydl = _mock_ydl(mocker)
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        provider.download(_dl_match(), log=None)
+        assert mock_ydl.download.call_count == 1
+
+    def test_best_format_title_with_temp_marker_skipped(self, provider, mocker, tmp_path):
+        """A legit title ending in a temp marker (``Song.temp`` →
+        ``01 - Song.temp.opus``) is a finished track: only suffixes appended
+        after the stem are inspected, so the dot inside the title is not mistaken
+        for an in-progress marker. The track must be skipped, not re-downloaded."""
+        provider._opts.download_dir = str(tmp_path)
+        provider._opts.audio_format = "best"
+        album_path = tmp_path / "Lidarr Artist" / "Lidarr Album"
+        album_path.mkdir(parents=True)
+        (album_path / "01 - Song.temp.opus").write_bytes(b"audio")
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="Song.temp")]))
+        cls, mock_ydl = _mock_ydl(mocker)
+        mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        assert provider.download(_dl_match(), log=None) is True
+        assert mock_ydl.download.call_count == 0
+
+    def test_best_format_post_processing_kept(self, provider, mocker, tmp_path):
+        """For `best`, a post-processing error after the audio landed is non-fatal:
+        the produced (dynamic-ext) file is resolved from disk and tagged."""
+        provider._opts.download_dir = str(tmp_path)
+        provider._opts.audio_format = "best"
+        album_path = tmp_path / "Lidarr Artist" / "Lidarr Album"
+        _mock_ytmusic(mocker, _album_data(tracks=[_track(video_id="v", title="One")]))
+        cls, mock_ydl = _mock_ydl(mocker)
+        tags = mocker.patch("albfetcharr.sources.youtube_music._write_track_tags")
+
+        def _download(_urls):
+            album_path.mkdir(parents=True, exist_ok=True)
+            (album_path / "01 - One.opus").write_bytes(b"audio")
+            raise yt_dlp.utils.PostProcessingError("embedding thumbnail failed")
+
+        mock_ydl.download.side_effect = _download
+
+        assert provider.download(_dl_match(), log=None) is True
+        assert tags.call_args_list[0].args[0] == album_path / "01 - One.opus"
+
     def test_with_log_installs_hooks(self, provider, mocker, tmp_path):
         """A log callback installs progress_hooks and logger on the opts."""
         provider._opts.download_dir = str(tmp_path)
@@ -763,6 +865,16 @@ class TestBuildYtMusicClient:
     def test_malformed_json_falls_back_anonymous(self, mocker, tmp_path):
         f = tmp_path / "bad.json"
         f.write_text("{not valid json")
+        mock_ytm = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
+        _build_ytmusic_client(self._opts(str(f)))
+        mock_ytm.assert_called_once_with()
+
+    def test_non_object_json_falls_back_anonymous(self, mocker, tmp_path):
+        # Syntactically valid JSON that isn't an object (a list). Without the
+        # isinstance guard, data.get(...) would raise an AttributeError that
+        # escapes the auth try/except entirely and crashes search.
+        f = tmp_path / "list.json"
+        f.write_text(json.dumps([]))
         mock_ytm = mocker.patch("albfetcharr.sources.youtube_music.YTMusic")
         _build_ytmusic_client(self._opts(str(f)))
         mock_ytm.assert_called_once_with()

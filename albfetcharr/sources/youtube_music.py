@@ -7,11 +7,11 @@ via OAuth when a credentials file is configured (see ``_build_ytmusic_client``).
 Downloading still uses yt-dlp.
 """
 
-import json
+import glob
 import logging
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import ClassVar
 
 import yt_dlp
@@ -19,6 +19,7 @@ from mutagen import File as MutagenFile
 from ytmusicapi import OAuthCredentials, YTMusic
 
 from albfetcharr.config import YtDlpOptions
+from albfetcharr.settings.file_status import load_oauth_json
 from albfetcharr.sources.base import DownloadProgress, LogFn, Match, ProgressFn, SourceProvider
 from albfetcharr.sources.ytdlp_base import (
     LogAdapter,
@@ -60,11 +61,16 @@ def _build_ytmusic_client(opts: YtDlpOptions) -> YTMusic:
     if not path or not os.path.exists(path):
         return YTMusic()
 
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError) as e:
-        logger.warning("Could not read YTMusic OAuth file %s: %s; using anonymous search", path, e)
+    # Shared loader with oauth_file_status: returns None for unreadable, malformed,
+    # or non-object JSON (e.g. ``[]``) — guarding the ``data.get(...)`` calls below
+    # from an AttributeError that would escape the auth try/except entirely.
+    data = load_oauth_json(path)
+    if data is None:
+        logger.warning(
+            "Could not read YTMusic OAuth file %s (unreadable or not a JSON object); "
+            "using anonymous search",
+            path,
+        )
         return YTMusic()
 
     client_id = data.get("client_id") or opts.ytmusic_client_id
@@ -102,8 +108,90 @@ _CODEC_EXT = {"aac": "m4a", "alac": "m4a", "vorbis": "ogg"}
 
 
 def _audio_ext(audio_format: str) -> str:
-    """Resolve the on-disk file extension produced for a yt-dlp audio codec."""
+    """Resolve the on-disk file extension produced for a yt-dlp audio codec.
+
+    Returns ``"best"`` unchanged for the passthrough format — there the produced
+    extension is only known after extraction (yt-dlp keeps the source container,
+    typically ``.opus`` or ``.m4a``), so callers must resolve the real file on
+    disk via ``_produced_file`` rather than assume ``stem.best``.
+    """
     return _CODEC_EXT.get(audio_format, audio_format)
+
+
+# yt-dlp / FFmpeg in-progress markers. ``.part`` / ``.ytdl`` are the final suffix
+# of a partial download (``stem.opus.part``); ``.temp`` is an *infix* before the
+# real extension in FFmpegPostProcessor's temp file (``stem.temp.opus``, whose
+# final suffix is the codec, not ``.temp``). Either marks an unfinished track, so
+# the whole suffix chain — not just the final suffix — is inspected.
+_TEMP_MARKERS = {".part", ".ytdl", ".temp"}
+
+# Audio container extensions yt-dlp / FFmpegExtractAudio can leave on disk. For a
+# fixed codec the produced extension is deterministic; for ``best`` (passthrough)
+# yt-dlp keeps the source container, so any of these may appear. A finished track
+# is recognized by an allowlist of audio extensions — not by excluding known
+# sidecars — so a thumbnail, lyrics (``.lrc``), subtitle, or metadata/info file
+# can never be mistaken for the track, whatever extension it uses.
+_AUDIO_EXTS = {
+    ".opus",
+    ".m4a",
+    ".mp3",
+    ".aac",
+    ".ogg",
+    ".oga",
+    ".flac",
+    ".wav",
+    ".webm",
+    ".weba",
+    ".mka",
+}
+
+
+def _is_finished_track(candidate: Path, stem: str) -> bool:
+    """True when ``candidate`` is a finished audio file, not a sidecar or temp.
+
+    Requires a recognized audio extension (``_AUDIO_EXTS``) as the final suffix,
+    so thumbnails, lyrics, subtitles, and metadata sidecars are never counted as
+    the track. Also rejects yt-dlp/FFmpeg in-progress files, including the
+    post-processor's ``stem.temp.opus`` whose *final* suffix is the real codec —
+    hence the whole suffix chain is checked, not just the last one.
+
+    Only the suffixes appended *after* ``stem`` are inspected; dots inside the
+    track title itself (e.g. ``Song.temp`` → ``01 - Song.temp.opus``) belong to
+    the stem and must not be mistaken for in-progress markers.
+    """
+    appended = candidate.name[len(stem) :] if candidate.name.startswith(stem) else candidate.name
+    # ``appended`` starts with a dot (glob matched ``stem.*``); prefix a
+    # placeholder so pathlib parses the trailing chain, not a hidden file.
+    trailing = PurePosixPath("x" + appended)
+    suffixes = {s.lower() for s in trailing.suffixes}
+    if suffixes & _TEMP_MARKERS:
+        return False
+    return trailing.suffix.lower() in _AUDIO_EXTS
+
+
+def _produced_file(album_path: Path, stem: str, ext: str) -> Path | None:
+    """Return the produced audio file for ``stem`` on disk, or None.
+
+    For a fixed codec the on-disk extension is deterministic, so this is a plain
+    existence check on ``stem.ext``. For ``best`` (passthrough — yt-dlp keeps the
+    source container, so the extension is only known after extraction) it matches
+    any ``stem.*`` file with a recognized audio extension (skipping thumbnails,
+    lyrics/metadata sidecars, and partial downloads).
+
+    Used to skip already-downloaded tracks and, after a post-processing error, to
+    tell a produced-then-failed track from one that never landed — both of which
+    were broken for ``best`` while ``stem.best`` (a path yt-dlp never writes) was
+    assumed.
+    """
+    if ext != "best":
+        exact = album_path / f"{stem}.{ext}"
+        return exact if exact.exists() else None
+    if not album_path.is_dir():
+        return None
+    for candidate in sorted(album_path.glob(f"{glob.escape(stem)}.*")):
+        if candidate.is_file() and _is_finished_track(candidate, stem):
+            return candidate
+    return None
 
 
 def _largest_thumbnail(thumbnails: list[dict] | None) -> str | None:
@@ -487,10 +575,10 @@ class YouTubeMusicProvider(SourceProvider):
             track_artist = _join_artists(track.get("artists")) or album_artist
 
             stem = f"{idx:02d} - {_sanitize_name(track_title)}"
-            final_path = album_path / f"{stem}.{ext}"
-            if final_path.exists():
+            existing_file = _produced_file(album_path, stem, ext)
+            if existing_file is not None:
                 existing += 1
-                _log(f"Already downloaded {idx}/{total}: {final_path.name}")
+                _log(f"Already downloaded {idx}/{total}: {existing_file.name}")
                 _emit(f"Already downloaded: {track_title}")
                 continue
 
@@ -508,12 +596,29 @@ class YouTubeMusicProvider(SourceProvider):
                 # processing (e.g. thumbnail embed). If the audio is already on
                 # disk, a post-processing failure is non-fatal — keep and tag the
                 # track rather than failing the whole album (partial contract).
-                if not final_path.exists():
+                final_path = _produced_file(album_path, stem, ext)
+                if final_path is None:
                     errors += 1
                     _log(f"yt-dlp failed for track {idx}/{total} ({video_id}): {e}")
                     _emit(f"Failed: {track_title}")
                     continue
                 _log(f"Post-processing issue for track {idx}/{total} ({video_id}): {e}")
+            else:
+                # Clean success. A fixed codec's path is deterministic; for ``best``
+                # the extension is only known post-extraction, so resolve the file
+                # yt-dlp actually produced (it exists now) rather than guess.
+                if ext == "best":
+                    final_path = _produced_file(album_path, stem, ext)
+                    if final_path is None:
+                        errors += 1
+                        _log(
+                            f"yt-dlp reported success but produced no file for "
+                            f"track {idx}/{total} ({video_id})"
+                        )
+                        _emit(f"Failed: {track_title}")
+                        continue
+                else:
+                    final_path = album_path / f"{stem}.{ext}"
 
             _write_track_tags(
                 final_path,
