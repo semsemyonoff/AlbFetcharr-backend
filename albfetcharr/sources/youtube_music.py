@@ -309,15 +309,19 @@ class YouTubeMusicProvider(SourceProvider):
         FFmpegExtractAudio. The optional cookiefile is applied when configured.
         """
         opts = self._opts
+        if opts.audio_format == "best":
+            audio_pp = {"key": "FFmpegExtractAudio", "preferredcodec": "best"}
+        else:
+            audio_pp = {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": opts.audio_format,
+                "preferredquality": str(opts.audio_quality),
+            }
         ydl_opts = {
             "format": "bestaudio/best",
             "outtmpl": outtmpl,
             "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": opts.audio_format,
-                    "preferredquality": str(opts.audio_quality),
-                },
+                audio_pp,
                 {"key": "EmbedThumbnail"},
             ],
             "writethumbnail": True,

@@ -91,15 +91,20 @@ def build_ydl_opts(opts: YtDlpOptions, *, search: bool) -> dict:
         apply_cookies(ydl_opts, opts)
         return ydl_opts
 
+    if opts.audio_format == "best":
+        audio_pp = {"key": "FFmpegExtractAudio", "preferredcodec": "best"}
+    else:
+        audio_pp = {
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": opts.audio_format,
+            "preferredquality": opts.audio_quality,
+        }
+
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": str(Path(opts.download_dir) / opts.path_pattern),
         "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": opts.audio_format,
-                "preferredquality": opts.audio_quality,
-            },
+            audio_pp,
             {
                 "key": "FFmpegMetadata",
                 "add_metadata": True,

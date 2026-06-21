@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from albfetcharr.config import YtDlpOptions
+from albfetcharr.config import DEFAULT_YTDLP_PATH_PATTERN, YtDlpOptions
 from albfetcharr.sources.ytdlp_base import (
     album_dir_from_info,
     apply_cookies,
@@ -18,7 +18,7 @@ class TestYtDlpOptions:
         """Test YtDlpOptions with default values."""
         opts = YtDlpOptions(download_dir="/downloads")
         assert opts.download_dir == "/downloads"
-        assert opts.path_pattern == "%(artist)s/%(album)s/%(track_number)02d - %(title)s.%(ext)s"
+        assert opts.path_pattern == DEFAULT_YTDLP_PATH_PATTERN
         assert opts.audio_format == "flac"
         assert opts.audio_quality == 192
 
@@ -417,3 +417,30 @@ class TestAlbumDirFromInfo:
         result = album_dir_from_info(info)
 
         assert result == Path("/dl/Artist/Album")
+
+
+class TestBestFormatPassthrough:
+    """build_ydl_opts passes through source audio without re-encoding for 'best'."""
+
+    def test_best_format_omits_preferred_quality(self):
+        opts = YtDlpOptions(download_dir="/downloads", audio_format="best")
+        pp = build_ydl_opts(opts, search=False)["postprocessors"][0]
+        assert pp["preferredcodec"] == "best"
+        assert "preferredquality" not in pp
+
+    def test_best_format_still_has_extract_audio_key(self):
+        opts = YtDlpOptions(download_dir="/downloads", audio_format="best")
+        pp = build_ydl_opts(opts, search=False)["postprocessors"][0]
+        assert pp["key"] == "FFmpegExtractAudio"
+
+    def test_lossy_format_still_carries_quality(self):
+        opts = YtDlpOptions(download_dir="/downloads", audio_format="mp3", audio_quality=320)
+        pp = build_ydl_opts(opts, search=False)["postprocessors"][0]
+        assert pp["preferredcodec"] == "mp3"
+        assert pp["preferredquality"] == 320
+
+    def test_opus_format_carries_quality(self):
+        opts = YtDlpOptions(download_dir="/downloads", audio_format="opus", audio_quality=160)
+        pp = build_ydl_opts(opts, search=False)["postprocessors"][0]
+        assert pp["preferredcodec"] == "opus"
+        assert pp["preferredquality"] == 160

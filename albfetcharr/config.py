@@ -10,6 +10,10 @@ logger = logging.getLogger("albfetcharr")
 # file is absent, search falls back to anonymous requests (today's behavior).
 DEFAULT_YTMUSIC_OAUTH_FILE = "/config/ytmusic_oauth.json"
 
+# Hardcoded yt-dlp output template — not user-configurable (free-form templates
+# are tightly coupled to the Lidarr import lookup; a fixed structure is safer).
+DEFAULT_YTDLP_PATH_PATTERN = "%(artist)s/%(album)s/%(track_number)02d - %(title)s.%(ext)s"
+
 
 @dataclass
 class YandexOptions:
@@ -28,7 +32,6 @@ class YandexOptions:
     stick_to_artist: bool
     only_music: bool
     unsafe_path: bool
-    path_pattern: str | None
     download_dir: str
     clear_comments: bool = False
 
@@ -50,7 +53,7 @@ class YtDlpOptions:
     download_dir: str
     audio_format: str = "flac"
     audio_quality: int = 192
-    path_pattern: str = "%(artist)s/%(album)s/%(track_number)02d - %(title)s.%(ext)s"
+    path_pattern: str = DEFAULT_YTDLP_PATH_PATTERN
     cookies_file: str | None = None
     # Number of attempts per track on transient failures (HTTP 403, bot gate,
     # network blips). 1 means a single attempt (no retry). Configured via

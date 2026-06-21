@@ -29,7 +29,6 @@ def _make_cfg(
         stick_to_artist=False,
         only_music=False,
         unsafe_path=False,
-        path_pattern=None,
         download_dir="/downloads",
         clear_comments=False,
     )

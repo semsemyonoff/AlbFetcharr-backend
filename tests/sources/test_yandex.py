@@ -25,7 +25,6 @@ def yandex_options():
         stick_to_artist=False,
         only_music=False,
         unsafe_path=False,
-        path_pattern=None,
         download_dir="/downloads",
     )
 
@@ -72,7 +71,6 @@ class TestBuildCmd:
             stick_to_artist=True,
             only_music=True,
             unsafe_path=True,
-            path_pattern="%artist%/%album%",
             download_dir="/music",
         )
         provider = YandexMusicProvider(token="test", options=options)
@@ -82,9 +80,13 @@ class TestBuildCmd:
         assert "--stick-to-artist" in cmd
         assert "--only-music" in cmd
         assert "--unsafe-path" in cmd
-        assert "--path-pattern" in cmd
-        assert "%artist%/%album%" in cmd
+        assert "--path-pattern" not in cmd
         assert "/music" in cmd
+
+    def test_build_cmd_never_emits_path_pattern(self, provider):
+        """Yandex command never emits --path-pattern (falls back to tool default)."""
+        cmd = provider._build_cmd("https://music.yandex.ru/album/12345")
+        assert "--path-pattern" not in cmd
 
     def test_build_cmd_no_skip_existing(self):
         """Test command when skip_existing is False."""
@@ -102,7 +104,6 @@ class TestBuildCmd:
             stick_to_artist=False,
             only_music=False,
             unsafe_path=False,
-            path_pattern=None,
             download_dir="/downloads",
         )
         provider = YandexMusicProvider(token="test", options=options)

@@ -784,3 +784,48 @@ class TestBuildYtMusicClient:
         # except clause then calls YTMusic() once for the anonymous fallback.
         _build_ytmusic_client(self._opts(str(f)))
         mock_ytm.assert_called_once_with()
+
+
+class TestBuildTrackOptsBestFormat:
+    """_build_track_opts omits preferredquality for 'best' format."""
+
+    @pytest.fixture
+    def opts_best(self):
+        return YtDlpOptions(
+            download_dir="/downloads",
+            audio_format="best",
+            audio_quality=192,
+            download_retries=1,
+            ytmusic_oauth_file="",
+        )
+
+    @pytest.fixture
+    def opts_opus(self):
+        return YtDlpOptions(
+            download_dir="/downloads",
+            audio_format="opus",
+            audio_quality=160,
+            download_retries=1,
+            ytmusic_oauth_file="",
+        )
+
+    def test_best_omits_preferred_quality(self, opts_best):
+        provider = YouTubeMusicProvider(opts_best)
+        ydl_opts = provider._build_track_opts("/dl/Artist/Album/01.%(ext)s")
+        pp = ydl_opts["postprocessors"][0]
+        assert pp["key"] == "FFmpegExtractAudio"
+        assert pp["preferredcodec"] == "best"
+        assert "preferredquality" not in pp
+
+    def test_lossy_format_carries_quality(self, opts_opus):
+        provider = YouTubeMusicProvider(opts_opus)
+        ydl_opts = provider._build_track_opts("/dl/Artist/Album/01.%(ext)s")
+        pp = ydl_opts["postprocessors"][0]
+        assert pp["preferredcodec"] == "opus"
+        assert pp["preferredquality"] == "160"
+
+    def test_best_embed_thumbnail_still_present(self, opts_best):
+        provider = YouTubeMusicProvider(opts_best)
+        ydl_opts = provider._build_track_opts("/dl/Artist/Album/01.%(ext)s")
+        keys = [p["key"] for p in ydl_opts["postprocessors"]]
+        assert "EmbedThumbnail" in keys

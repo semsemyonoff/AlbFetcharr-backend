@@ -6,6 +6,7 @@ import os
 
 import pytest
 
+from albfetcharr.config import DEFAULT_YTDLP_PATH_PATTERN
 from albfetcharr.settings import registry
 from albfetcharr.settings.resolver import resolve_app_config, resolve_value
 
@@ -238,13 +239,9 @@ class TestResolveAppConfigDefaults:
         cfg = resolve_app_config()
         assert cfg.ytdlp_options.audio_quality == 192
 
-    def test_ytdlp_path_pattern_default(self, tmp_db, clean_env):
+    def test_ytdlp_path_pattern_is_hardcoded_constant(self, tmp_db, clean_env):
         cfg = resolve_app_config()
-        assert "%(artist)s" in cfg.ytdlp_options.path_pattern
-
-    def test_yandex_path_pattern_none_by_default(self, tmp_db, clean_env):
-        cfg = resolve_app_config()
-        assert cfg.yandex_options.path_pattern is None
+        assert cfg.ytdlp_options.path_pattern == DEFAULT_YTDLP_PATH_PATTERN
 
     def test_ytdlp_cookies_none_by_default(self, tmp_db, clean_env):
         cfg = resolve_app_config()
@@ -502,3 +499,16 @@ class TestParseLibraryMapStrIntegration:
         cfg = resolve_app_config()
         assert cfg.lidarr.library_map is None
         assert parse_library_map_str(cfg.lidarr.library_map) == {}
+
+
+class TestHardcodedPathPattern:
+    """yt-dlp path pattern is always the constant; no registry key involved."""
+
+    def test_pattern_matches_constant_regardless_of_env(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_YTDLP_FORMAT", "mp3")
+        cfg = resolve_app_config()
+        assert cfg.ytdlp_options.path_pattern == DEFAULT_YTDLP_PATH_PATTERN
+
+    def test_pattern_unchanged_with_session_overrides(self, tmp_db, clean_env):
+        cfg = resolve_app_config(session_overrides={"ytdlp_format": "opus"})
+        assert cfg.ytdlp_options.path_pattern == DEFAULT_YTDLP_PATH_PATTERN

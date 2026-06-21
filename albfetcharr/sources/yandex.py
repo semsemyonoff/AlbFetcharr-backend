@@ -184,9 +184,6 @@ class YandexMusicProvider(SourceProvider):
             self._options.retry_delay,
         ]
 
-        if self._options.path_pattern:
-            cmd += ["--path-pattern", self._options.path_pattern]
-
         if self._options.skip_existing:
             cmd.append("--skip-existing")
         if self._options.embed_cover:
