@@ -203,11 +203,9 @@ AlbFetcharr поддерживает несколько источников д�
 | `ALBFETCHARR_STICK_TO_ARTIST` | `0` | Загружать альбомы только данного исполнителя (`0` / `1`) |
 | `ALBFETCHARR_ONLY_MUSIC` | `0` | Только музыка, без подкастов и аудиокниг (`0` / `1`) |
 | `ALBFETCHARR_COMPAT_LEVEL` | `1` | Уровень совместимости (`0` — `1`) |
-| `ALBFETCHARR_YANDEX_PATH_PATTERN` | — | Шаблон пути для Яндекс Музыки (`#album-artist/#album/#number - #title`). Ранее `ALBFETCHARR_PATH_PATTERN` |
 | `ALBFETCHARR_UNSAFE_PATH` | `0` | Не очищать путь от недопустимых символов (`0` / `1`) |
-| `ALBFETCHARR_YTDLP_PATH_PATTERN` | `%(artist)s/%(album)s/%(track_number)02d - %(title)s.%(ext)s` | Шаблон пути для yt-dlp источников (YouTube Music, SoundCloud) |
-| `ALBFETCHARR_YTDLP_FORMAT` | `flac` | Формат аудио для yt-dlp источников: `flac`, `m4a`, `mp3` |
-| `ALBFETCHARR_YTDLP_QUALITY` | `192` | Битрейт для сжатых форматов (кбит/с), игнорируется для FLAC |
+| `ALBFETCHARR_YTDLP_FORMAT` | `opus` | Формат аудио для yt-dlp источников: `best` (без перекодирования), `opus`, `m4a`, `mp3` |
+| `ALBFETCHARR_YTDLP_QUALITY` | `192` | Битрейт для сжатых форматов (кбит/с); не используется для `best` |
 | `ALBFETCHARR_YTDLP_COOKIES` | — | Путь (внутри контейнера) к Netscape `cookies.txt` для загрузки YouTube/SoundCloud за бот-гейтом. Опционально; если не задан или файл отсутствует — cookies не используются (см. [Cookies для YouTube](#cookies-для-youtube)) |
 | `ALBFETCHARR_YTDLP_RETRIES` | `3` | Число попыток загрузки одного трека для yt-dlp источников при временных ошибках (например, `HTTP 403`). Минимум 1 (без повторов) |
 | `ALBFETCHARR_YTMUSIC_OAUTH` | `/config/ytmusic_oauth.json` | Путь (внутри контейнера) к OAuth-файлу `ytmusicapi` для авторизованного поиска YouTube Music. Используется только если файл существует; иначе поиск анонимный (см. [OAuth для поиска YouTube Music](#oauth-для-поиска-youtube-music)) |
@@ -236,9 +234,11 @@ AlbFetcharr поддерживает постоянное хранилище н�
 
 Настройки также доступны через HTTP API:
 
-- `GET /api/settings` — все настройки с источником (`db` / `env` / `default`), секреты замаскированы
-- `PUT /api/settings` — обновить настройки (`{"key": "value", …}`); Tier-1–4 ключи реестра
-- `DELETE /api/settings/{key}` — удалить переопределение из базы (откат к env / умолчанию)
+- `GET /api/settings` — все настройки с источником (`db` / `env` / `default`), секреты замаскированы; каждый элемент содержит `readonly: bool` и `file_status` (для `ytmusic_oauth_file` — `ok`/`missing`/`invalid`; для `ytdlp_cookies_file` — `found`/`missing`; для остальных — `null`)
+- `PUT /api/settings` — обновить настройки (`{"key": "value", …}`); Tier-1–4 ключи реестра; запрос с readonly-ключом (`ytmusic_oauth_file`, `ytdlp_cookies_file`, `lidarr_import_path`, `library_map`) возвращает `400`
+- `DELETE /api/settings/{key}` — удалить переопределение из базы (откат к env / умолчанию); для readonly-ключей DELETE разрешён (сбрасывает ранее сохранённое в БД значение)
+
+> **`lidarr_import_path` и `library_map` — только через переменные окружения.** Начиная с этой версии эти ключи доступны в интерфейсе только для чтения (секция «Среда»). PUT-запрос для них отклоняется (`400`). Задавайте значения исключительно через `ALBFETCHARR_LIDARR_IMPORT_PATH` / `ALBFETCHARR_LIBRARY_MAP`. Ранее сохранённые в БД значения по-прежнему применяются до их удаления через DELETE.
 
 > **Примечание об изменении логики `enable_*`:** начиная с этой версии переменные `ALBFETCHARR_ENABLE_YANDEX`, `ALBFETCHARR_ENABLE_YOUTUBE_MUSIC` и `ALBFETCHARR_ENABLE_SOUNDCLOUD` принимают только `1`/`true`/`yes` (включено) и `0`/`false`/`no` (отключено). В предыдущих версиях `enable_youtube_music` и `enable_soundcloud` считали _любое_ ненулевое значение (например, `false` или `no`) как «включено» — это была ошибка. Если вы явно задавали эти переменные, проверьте, что значение по-прежнему корректно.
 
@@ -290,12 +290,13 @@ docker compose run --rm albfetcharr download --source soundcloud "https://soundc
 
 | Старая переменная | Новая переменная | Причина |
 |---|---|---|
-| `ALBFETCHARR_PATH_PATTERN` | `ALBFETCHARR_YANDEX_PATH_PATTERN` | применялась только к Яндекс Музыке; новая `ALBFETCHARR_YTDLP_PATH_PATTERN` — отдельная переменная для yt-dlp |
 | `ALBFETCHARR_TIMEOUT` | `ALBFETCHARR_YANDEX_TIMEOUT` | применялась только к Яндекс Музыке |
 | `ALBFETCHARR_TRIES` | `ALBFETCHARR_YANDEX_TRIES` | применялась только к Яндекс Музыке |
 | `ALBFETCHARR_RETRY_DELAY` | `ALBFETCHARR_YANDEX_RETRY_DELAY` | применялась только к Яндекс Музыке |
 
 Обновите свой `docker-compose.yml` / `.env` и при необходимости настройки в DWE-воркспейсе (`workspace/defaults.yml` / `workspace/local.yml`).
+
+Переменные `ALBFETCHARR_YANDEX_PATH_PATTERN` и `ALBFETCHARR_YTDLP_PATH_PATTERN` более не читаются — шаблоны пути зашиты в код. Удалите их из конфигурации, если они присутствуют.
 
 ## Миграция с Yamdarr
 
