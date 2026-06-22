@@ -3,10 +3,12 @@
 from pathlib import Path
 
 from albfetcharr.config import DEFAULT_YTDLP_PATH_PATTERN, YtDlpOptions
+from albfetcharr.sources.base import DownloadProgress
 from albfetcharr.sources.ytdlp_base import (
     album_dir_from_info,
     apply_cookies,
     build_ydl_opts,
+    make_set_progress_hook,
     parse_search_entry,
 )
 
@@ -444,3 +446,31 @@ class TestBestFormatPassthrough:
         pp = build_ydl_opts(opts, search=False)["postprocessors"][0]
         assert pp["preferredcodec"] == "opus"
         assert pp["preferredquality"] == 160
+
+
+class TestMakeSetProgressHook:
+    """Test make_set_progress_hook (yt-dlp per-entry hook → DownloadProgress)."""
+
+    def test_finished_entry_reports_progress(self):
+        captured = []
+        hook = make_set_progress_hook(captured.append)
+
+        hook({"status": "finished", "info_dict": {"playlist_index": 2, "n_entries": 6}})
+
+        assert len(captured) == 1
+        p = captured[0]
+        assert isinstance(p, DownloadProgress)
+        assert (p.completed, p.total) == (2, 6)
+
+    def test_downloading_status_ignored(self):
+        captured = []
+        hook = make_set_progress_hook(captured.append)
+        hook({"status": "downloading", "info_dict": {"playlist_index": 1, "n_entries": 6}})
+        assert captured == []
+
+    def test_entry_without_playlist_metadata_ignored(self):
+        """A single-track URL (no playlist_index/n_entries) reports nothing."""
+        captured = []
+        hook = make_set_progress_hook(captured.append)
+        hook({"status": "finished", "info_dict": {"title": "Solo Track"}})
+        assert captured == []

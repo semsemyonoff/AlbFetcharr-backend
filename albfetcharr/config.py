@@ -66,6 +66,14 @@ class YtDlpOptions:
     ytmusic_oauth_file: str = DEFAULT_YTMUSIC_OAUTH_FILE
     ytmusic_client_id: str | None = None
     ytmusic_client_secret: str | None = None
+    # SoundCloud search scope. When False (default), SoundCloud search hits only
+    # the `search/albums` endpoint, which returns just sets tagged as real albums
+    # (is_album=true) — clean, but it misses releases the uploader never marked as
+    # an album (those are plain "playlists"/sets). When True, search additionally
+    # queries `search/playlists`, catching such releases at the cost of also
+    # surfacing fan-made compilations and mixtapes (e.g. a 27-track "Collection").
+    # Configured via ALBFETCHARR_SOUNDCLOUD_INCLUDE_PLAYLISTS.
+    soundcloud_include_playlists: bool = False
 
 
 @dataclass

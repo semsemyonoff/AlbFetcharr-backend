@@ -11,6 +11,69 @@ from albfetcharr.sources.ytdlp_base import repair_tags_from_info
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "audio"
 
 
+def _make_album_dir(tmp_path):
+    """Copy the fixture mp3s into a fresh album directory."""
+    if not FIXTURES_DIR.exists():
+        pytest.fail(f"Audio fixtures directory not found: {FIXTURES_DIR}")
+    album_dir = tmp_path / "Test Artist" / "Test Album"
+    album_dir.mkdir(parents=True)
+    for src in FIXTURES_DIR.glob("*.mp3"):
+        shutil.copy2(src, album_dir / src.name)
+    return album_dir
+
+
+class TestRepairTagsAlbumIdentityOverrides:
+    """Test the album/artist override path of repair_tags_from_info."""
+
+    def test_album_override_overwrites_existing_album(self, tmp_path):
+        album_dir = _make_album_dir(tmp_path)
+        # Seed a wrong (source-derived) album/albumartist on every file.
+        for f in album_dir.glob("*.mp3"):
+            tags = MutagenFile(str(f), easy=True)
+            tags["album"] = ["SC Set Title"]
+            tags["albumartist"] = ["Re-uploader"]
+            tags.save()
+
+        repair_tags_from_info(
+            album_dir,
+            {"entries": []},
+            artist_override="Lidarr Artist",
+            album_override="Lidarr Album",
+        )
+
+        for f in album_dir.glob("*.mp3"):
+            tags = MutagenFile(str(f), easy=True)
+            assert tags["album"] == ["Lidarr Album"]
+            assert tags["albumartist"] == ["Lidarr Artist"]
+
+    def test_artist_override_fills_only_when_missing(self, tmp_path):
+        album_dir = _make_album_dir(tmp_path)
+        files = sorted(album_dir.glob("*.mp3"))
+        # One file credits a featured performer, one has no artist tag.
+        t0 = MutagenFile(str(files[0]), easy=True)
+        t0["artist"] = ["Featured Guest"]
+        t0.save()
+        t1 = MutagenFile(str(files[1]), easy=True)
+        try:
+            del t1["artist"]
+        except KeyError:
+            pass
+        t1.save()
+
+        repair_tags_from_info(
+            album_dir,
+            {"entries": []},
+            artist_override="Lidarr Artist",
+            album_override="Lidarr Album",
+        )
+
+        # Featured artist preserved; the empty one falls back to the Lidarr name.
+        assert MutagenFile(str(files[0]), easy=True)["artist"] == ["Featured Guest"]
+        assert MutagenFile(str(files[1]), easy=True)["artist"] == ["Lidarr Artist"]
+        # albumartist is forced on both regardless.
+        assert MutagenFile(str(files[0]), easy=True)["albumartist"] == ["Lidarr Artist"]
+
+
 class TestRepairTagsFromInfo:
     """Test repair_tags_from_info function."""
 
