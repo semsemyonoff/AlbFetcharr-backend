@@ -233,7 +233,7 @@ class TestResolveAppConfigDefaults:
 
     def test_ytdlp_format_default(self, tmp_db, clean_env):
         cfg = resolve_app_config()
-        assert cfg.ytdlp_options.audio_format == "opus"
+        assert cfg.ytdlp_options.audio_format == "best"
 
     def test_ytdlp_quality_default(self, tmp_db, clean_env):
         cfg = resolve_app_config()
