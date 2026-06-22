@@ -62,7 +62,7 @@ _CATALOG: list[Setting] = [
     Setting("yandex_only_music",     "bool", "0",     None,                          "ALBFETCHARR_ONLY_MUSIC",            "session", False, "Download (Yandex)", "yandex"),
     Setting("yandex_stick_to_artist","bool", "0",     None,                          "ALBFETCHARR_STICK_TO_ARTIST",       "session", False, "Download (Yandex)", "yandex"),
     Setting("yandex_clear_comments", "bool", "0",     None,                          "ALBFETCHARR_CLEAR_COMMENTS",        "session", False, "Download (Yandex)", "yandex"),
-    Setting("ytdlp_format",          "enum", "opus",  ["best", "opus", "m4a", "mp3"], "ALBFETCHARR_YTDLP_FORMAT", "session", False, "Download (yt-dlp)", "ytdlp"),
+    Setting("ytdlp_format",          "enum", "best",  ["best", "opus", "m4a", "mp3"], "ALBFETCHARR_YTDLP_FORMAT", "session", False, "Download (yt-dlp)", "ytdlp"),
     Setting("ytdlp_quality",         "int",  "192",   None,                          "ALBFETCHARR_YTDLP_QUALITY",         "session", False, "Download (yt-dlp)", "ytdlp", min_val=0),
 
     # ── Tier 4 — UI prefs (global default; per-browser in localStorage) ─────
