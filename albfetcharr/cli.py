@@ -30,7 +30,8 @@ def detect_source(url: str) -> str | None:
     """Auto-detect the source provider from a URL.
 
     Returns:
-        Source ID ("yandex", "youtube_music", "soundcloud") or None if unrecognized.
+        Source ID ("yandex", "youtube_music", "soundcloud", "bandcamp") or None
+        if unrecognized.
     """
     if "music.yandex" in url:
         return "yandex"
@@ -38,6 +39,8 @@ def detect_source(url: str) -> str | None:
         return "youtube_music"
     if "soundcloud.com" in url:
         return "soundcloud"
+    if "bandcamp.com" in url:
+        return "bandcamp"
     return None
 
 

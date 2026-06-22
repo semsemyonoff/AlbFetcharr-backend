@@ -77,6 +77,7 @@ def bootstrap_default_providers() -> None:
     global _REGISTRY
 
     from albfetcharr.settings.resolver import resolve_app_config
+    from albfetcharr.sources.bandcamp import BandcampProvider
     from albfetcharr.sources.soundcloud import SoundCloudProvider
     from albfetcharr.sources.yandex import YandexMusicProvider
     from albfetcharr.sources.youtube_music import YouTubeMusicProvider
@@ -98,5 +99,8 @@ def bootstrap_default_providers() -> None:
 
     if cfg.enable_soundcloud:
         fresh["soundcloud"] = SoundCloudProvider(cfg.ytdlp_options)
+
+    if cfg.enable_bandcamp:
+        fresh["bandcamp"] = BandcampProvider(cfg.ytdlp_options)
 
     _REGISTRY = fresh

@@ -76,6 +76,7 @@ def _build_per_run_providers(cfg) -> dict:
     registry singleton. Falls back to the global registry for sources that can't
     be constructed (e.g. Yandex with no token) via the caller's .get() fallback.
     """
+    from albfetcharr.sources.bandcamp import BandcampProvider
     from albfetcharr.sources.soundcloud import SoundCloudProvider
     from albfetcharr.sources.yandex import YandexMusicProvider
     from albfetcharr.sources.youtube_music import YouTubeMusicProvider
@@ -87,6 +88,8 @@ def _build_per_run_providers(cfg) -> dict:
         providers["youtube_music"] = YouTubeMusicProvider(cfg.ytdlp_options)
     if cfg.enable_soundcloud:
         providers["soundcloud"] = SoundCloudProvider(cfg.ytdlp_options)
+    if cfg.enable_bandcamp:
+        providers["bandcamp"] = BandcampProvider(cfg.ytdlp_options)
     return providers
 
 

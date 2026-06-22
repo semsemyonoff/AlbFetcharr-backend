@@ -335,6 +335,9 @@ def test_main_no_args(capsys):
         # SoundCloud
         ("https://soundcloud.com/user/album-name", "soundcloud"),
         ("https://www.soundcloud.com/user/track-name", "soundcloud"),
+        # Bandcamp
+        ("https://artist.bandcamp.com/album/album-name", "bandcamp"),
+        ("https://artist.bandcamp.com/track/track-name", "bandcamp"),
         # Unsupported
         ("https://spotify.com/album/12345", None),
         ("https://apple.music/album/12345", None),
