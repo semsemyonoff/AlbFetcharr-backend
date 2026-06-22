@@ -44,6 +44,7 @@ _CATALOG: list[Setting] = [
     Setting("enable_yandex",         "bool", "1",     None,                          "ALBFETCHARR_ENABLE_YANDEX",         "global",  False, "Sources",           "app"),
     Setting("enable_youtube_music",  "bool", "1",     None,                          "ALBFETCHARR_ENABLE_YOUTUBE_MUSIC",  "global",  False, "Sources",           "app"),
     Setting("enable_soundcloud",     "bool", "1",     None,                          "ALBFETCHARR_ENABLE_SOUNDCLOUD",     "global",  False, "Sources",           "app"),
+    Setting("enable_bandcamp",       "bool", "1",     None,                          "ALBFETCHARR_ENABLE_BANDCAMP",       "global",  False, "Sources",           "app"),
     Setting("soundcloud_include_playlists","bool","0", None,                         "ALBFETCHARR_SOUNDCLOUD_INCLUDE_PLAYLISTS", "global", False, "Sources",      "ytdlp"),
     Setting("yandex_delay",          "int",  "0",     None,                          "ALBFETCHARR_DELAY",                 "global",  False, "Download (Yandex)", "yandex", min_val=0),
     Setting("yandex_compat_level",   "enum", "1",     ["0", "1"],                    "ALBFETCHARR_COMPAT_LEVEL",          "global",  False, "Download (Yandex)", "yandex"),

@@ -217,6 +217,7 @@ class TestResolveAppConfigDefaults:
         assert cfg.enable_yandex is True
         assert cfg.enable_youtube_music is True
         assert cfg.enable_soundcloud is True
+        assert cfg.enable_bandcamp is True
 
     def test_log_level_default(self, tmp_db, clean_env):
         cfg = resolve_app_config()
@@ -297,6 +298,11 @@ class TestResolveAppConfigEnvLayer:
         monkeypatch.setenv("ALBFETCHARR_ENABLE_SOUNDCLOUD", "no")
         cfg = resolve_app_config()
         assert cfg.enable_soundcloud is False
+
+    def test_enable_bandcamp_false_no(self, tmp_db, clean_env, monkeypatch):
+        monkeypatch.setenv("ALBFETCHARR_ENABLE_BANDCAMP", "no")
+        cfg = resolve_app_config()
+        assert cfg.enable_bandcamp is False
 
     def test_download_dir_from_env(self, tmp_db, clean_env, monkeypatch):
         monkeypatch.setenv("DOWNLOAD_DIR", "/music")

@@ -13,6 +13,7 @@ def _make_cfg(
     yandex_token: str | None = "tok",
     enable_youtube_music: bool = True,
     enable_soundcloud: bool = True,
+    enable_bandcamp: bool = True,
 ) -> AppConfig:
     lidarr = LidarrConfig(base_url="", api_key="", import_path="", library_map=None)
     yopts = YandexOptions(
@@ -51,6 +52,7 @@ def _make_cfg(
         enable_yandex=enable_yandex,
         enable_youtube_music=enable_youtube_music,
         enable_soundcloud=enable_soundcloud,
+        enable_bandcamp=enable_bandcamp,
     )
 
 
@@ -58,6 +60,7 @@ PATCH_RESOLVE = "albfetcharr.settings.resolver.resolve_app_config"
 PATCH_YANDEX = "albfetcharr.sources.yandex.YandexMusicProvider"
 PATCH_YTMUSIC = "albfetcharr.sources.youtube_music.YouTubeMusicProvider"
 PATCH_SC = "albfetcharr.sources.soundcloud.SoundCloudProvider"
+PATCH_BC = "albfetcharr.sources.bandcamp.BandcampProvider"
 
 
 class TestBootstrapYandexMatrix:
@@ -71,6 +74,7 @@ class TestBootstrapYandexMatrix:
             patch(PATCH_YANDEX, return_value=fake_provider) as MockYandex,
             patch(PATCH_YTMUSIC, return_value=MagicMock(id="youtube_music")),
             patch(PATCH_SC, return_value=MagicMock(id="soundcloud")),
+            patch(PATCH_BC, return_value=MagicMock(id="bandcamp")),
         ):
             bootstrap_default_providers()
 
@@ -106,6 +110,7 @@ class TestBootstrapYandexMatrix:
             patch(PATCH_YANDEX) as MockYandex,
             patch(PATCH_YTMUSIC, return_value=MagicMock(id="youtube_music")),
             patch(PATCH_SC, return_value=MagicMock(id="soundcloud")),
+            patch(PATCH_BC, return_value=MagicMock(id="bandcamp")),
         ):
             bootstrap_default_providers()
 
@@ -123,6 +128,7 @@ class TestBootstrapOtherToggles:
             patch(PATCH_YANDEX, return_value=MagicMock(id="yandex")),
             patch(PATCH_YTMUSIC) as MockYtMusc,
             patch(PATCH_SC, return_value=MagicMock(id="soundcloud")),
+            patch(PATCH_BC, return_value=MagicMock(id="bandcamp")),
         ):
             bootstrap_default_providers()
 
@@ -138,6 +144,7 @@ class TestBootstrapOtherToggles:
             patch(PATCH_YANDEX, return_value=MagicMock(id="yandex")),
             patch(PATCH_YTMUSIC, return_value=MagicMock(id="youtube_music")),
             patch(PATCH_SC) as MockSC,
+            patch(PATCH_BC, return_value=MagicMock(id="bandcamp")),
         ):
             bootstrap_default_providers()
 
@@ -145,7 +152,23 @@ class TestBootstrapOtherToggles:
         ids = {p.id for p in all_providers()}
         assert "soundcloud" not in ids
 
-    def test_all_enabled_registers_all_three(self):
+    def test_bandcamp_disabled_skips(self):
+        cfg = _make_cfg(enable_bandcamp=False)
+
+        with (
+            patch(PATCH_RESOLVE, return_value=cfg),
+            patch(PATCH_YANDEX, return_value=MagicMock(id="yandex")),
+            patch(PATCH_YTMUSIC, return_value=MagicMock(id="youtube_music")),
+            patch(PATCH_SC, return_value=MagicMock(id="soundcloud")),
+            patch(PATCH_BC) as MockBC,
+        ):
+            bootstrap_default_providers()
+
+        MockBC.assert_not_called()
+        ids = {p.id for p in all_providers()}
+        assert "bandcamp" not in ids
+
+    def test_all_enabled_registers_all_sources(self):
         cfg = _make_cfg()
 
         with (
@@ -153,14 +176,20 @@ class TestBootstrapOtherToggles:
             patch(PATCH_YANDEX, return_value=MagicMock(id="yandex")),
             patch(PATCH_YTMUSIC, return_value=MagicMock(id="youtube_music")),
             patch(PATCH_SC, return_value=MagicMock(id="soundcloud")),
+            patch(PATCH_BC, return_value=MagicMock(id="bandcamp")),
         ):
             bootstrap_default_providers()
 
         ids = {p.id for p in all_providers()}
-        assert ids == {"yandex", "youtube_music", "soundcloud"}
+        assert ids == {"yandex", "youtube_music", "soundcloud", "bandcamp"}
 
     def test_all_disabled_results_in_empty_registry(self):
-        cfg = _make_cfg(enable_yandex=False, enable_youtube_music=False, enable_soundcloud=False)
+        cfg = _make_cfg(
+            enable_yandex=False,
+            enable_youtube_music=False,
+            enable_soundcloud=False,
+            enable_bandcamp=False,
+        )
 
         with patch(PATCH_RESOLVE, return_value=cfg):
             bootstrap_default_providers()
@@ -178,6 +207,7 @@ class TestBootstrapIdempotentSwap:
             patch(PATCH_YANDEX, return_value=MagicMock(id="yandex")),
             patch(PATCH_YTMUSIC, return_value=MagicMock(id="youtube_music")),
             patch(PATCH_SC, return_value=MagicMock(id="soundcloud")),
+            patch(PATCH_BC, return_value=MagicMock(id="bandcamp")),
         ):
             bootstrap_default_providers()
 
@@ -189,6 +219,7 @@ class TestBootstrapIdempotentSwap:
             patch(PATCH_YANDEX, return_value=MagicMock(id="yandex")),
             patch(PATCH_YTMUSIC, return_value=MagicMock(id="youtube_music")),
             patch(PATCH_SC, return_value=MagicMock(id="soundcloud")),
+            patch(PATCH_BC, return_value=MagicMock(id="bandcamp")),
         ):
             bootstrap_default_providers()
 
@@ -204,6 +235,7 @@ class TestBootstrapIdempotentSwap:
             patch(PATCH_YANDEX, return_value=MagicMock(id="yandex")),
             patch(PATCH_YTMUSIC, return_value=MagicMock(id="youtube_music")),
             patch(PATCH_SC, return_value=MagicMock(id="soundcloud")),
+            patch(PATCH_BC, return_value=MagicMock(id="bandcamp")),
         ):
             bootstrap_default_providers()
 
@@ -215,6 +247,7 @@ class TestBootstrapIdempotentSwap:
             patch(PATCH_YANDEX, return_value=MagicMock(id="yandex")),
             patch(PATCH_YTMUSIC, return_value=MagicMock(id="youtube_music")),
             patch(PATCH_SC),
+            patch(PATCH_BC, return_value=MagicMock(id="bandcamp")),
         ):
             bootstrap_default_providers()
 
@@ -232,6 +265,7 @@ class TestBootstrapIdempotentSwap:
             patch(PATCH_YANDEX, return_value=MagicMock(id="yandex")),
             patch(PATCH_YTMUSIC, return_value=MagicMock(id="youtube_music")),
             patch(PATCH_SC, return_value=MagicMock(id="soundcloud")),
+            patch(PATCH_BC, return_value=MagicMock(id="bandcamp")),
         ):
             bootstrap_default_providers()
             snapshot_mid = {p.id for p in all_providers()}
@@ -242,8 +276,14 @@ class TestBootstrapIdempotentSwap:
             patch(PATCH_YANDEX, return_value=MagicMock(id="yandex")),
             patch(PATCH_YTMUSIC, return_value=MagicMock(id="youtube_music")),
             patch(PATCH_SC, return_value=MagicMock(id="soundcloud")),
+            patch(PATCH_BC, return_value=MagicMock(id="bandcamp")),
         ):
             bootstrap_default_providers()
 
-        assert snapshot_mid == {"yandex", "youtube_music", "soundcloud"}
-        assert {p.id for p in all_providers()} == {"yandex", "youtube_music", "soundcloud"}
+        assert snapshot_mid == {"yandex", "youtube_music", "soundcloud", "bandcamp"}
+        assert {p.id for p in all_providers()} == {
+            "yandex",
+            "youtube_music",
+            "soundcloud",
+            "bandcamp",
+        }
