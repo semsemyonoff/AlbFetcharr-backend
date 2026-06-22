@@ -73,7 +73,7 @@ class TestResolveValuePrecedence:
     def test_default_used_when_nothing_else(self, clean_env):
         s = registry.get("ytdlp_format")
         result = resolve_value(s, None, {})
-        assert result == "opus"
+        assert result == "best"
 
     def test_session_override_ignored_for_global_key(self):
         """Session overrides must not apply to global-only keys."""
@@ -352,11 +352,11 @@ class TestResolveAppConfigSessionLayer:
 
     def test_empty_overrides_uses_defaults(self, tmp_db, clean_env):
         cfg = resolve_app_config(session_overrides={})
-        assert cfg.ytdlp_options.audio_format == "opus"
+        assert cfg.ytdlp_options.audio_format == "best"
 
     def test_none_overrides_uses_defaults(self, tmp_db, clean_env):
         cfg = resolve_app_config(session_overrides=None)
-        assert cfg.ytdlp_options.audio_format == "opus"
+        assert cfg.ytdlp_options.audio_format == "best"
 
 
 class TestResolveAppConfigSecretFromDb:
