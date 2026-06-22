@@ -10,7 +10,6 @@ Downloading still uses yt-dlp.
 import glob
 import logging
 import os
-import re
 from pathlib import Path, PurePosixPath
 from typing import ClassVar
 
@@ -19,6 +18,7 @@ from mutagen import File as MutagenFile
 from ytmusicapi import OAuthCredentials, YTMusic
 
 from albfetcharr.config import YtDlpOptions
+from albfetcharr.download.locator import sanitize_path_segment as _sanitize_name
 from albfetcharr.settings.file_status import load_oauth_json
 from albfetcharr.sources.base import DownloadProgress, LogFn, Match, ProgressFn, SourceProvider
 from albfetcharr.sources.ytdlp_base import (
@@ -97,9 +97,6 @@ def _build_ytmusic_client(opts: YtDlpOptions) -> YTMusic:
         logger.warning("YTMusic auth from %s failed: %s; using anonymous search", path, e)
         return YTMusic()
 
-
-# Characters that are illegal or hostile in filesystem path segments.
-_FS_HOSTILE = re.compile(r'[/\\<>:"|?*\x00-\x1f]')
 
 # yt-dlp's FFmpegExtractAudio writes a container whose extension differs from the
 # codec name for a few codecs; map to the real on-disk extension so skip-existing
@@ -223,22 +220,6 @@ def _album_artist(album: dict | None, tracks: list[dict]) -> str:
         if names:
             return names
     return ""
-
-
-def _sanitize_name(name: str) -> str:
-    """Sanitize a string for use as a single filesystem path segment.
-
-    Strips filesystem-hostile characters (``/ \\ < > : " | ? *`` and control
-    chars) and collapses runs of whitespace. Distinct from
-    ``locator.normalize_name`` (which is for *matching*, not output paths);
-    this preserves case and most punctuation so on-disk names stay readable.
-    """
-    cleaned = _FS_HOSTILE.sub("", name or "")
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    # Strip leading/trailing dots so segments like "." / ".." can't escape the
-    # download root (path traversal) or create hidden directories.
-    cleaned = cleaned.strip(".").strip()
-    return cleaned or "Unknown"
 
 
 def _browse_id_from_url(url: str | None) -> str | None:

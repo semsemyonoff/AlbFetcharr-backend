@@ -150,6 +150,7 @@ def resolve_app_config(session_overrides: dict[str, str] | None = None) -> AppCo
         ytmusic_oauth_file=str(rv("ytmusic_oauth_file")),
         ytmusic_client_id=rv("ytmusic_client_id"),  # type: ignore[arg-type]
         ytmusic_client_secret=rv("ytmusic_client_secret"),  # type: ignore[arg-type]
+        soundcloud_include_playlists=bool(rv("soundcloud_include_playlists")),
     )
 
     ui = UIDefaults(

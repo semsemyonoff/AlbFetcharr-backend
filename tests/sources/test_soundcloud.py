@@ -6,6 +6,7 @@ import pytest
 import yt_dlp
 
 from albfetcharr.config import YtDlpOptions
+from albfetcharr.download.locator import album_output_dir
 from albfetcharr.sources.base import Match
 from albfetcharr.sources.soundcloud import SoundCloudProvider
 
@@ -27,95 +28,124 @@ def provider(ytdlp_options):
     return SoundCloudProvider(ytdlp_options)
 
 
+def _album_item(url, title, *, user="someuser", tracks=10, date="2018-11-15T00:00:00Z", cover="c"):
+    """Build a raw SoundCloud API set item like search/albums returns."""
+    return {
+        "permalink_url": url,
+        "title": title,
+        "user": {"username": user},
+        "track_count": tracks,
+        "release_date": date,
+        "artwork_url": cover,
+    }
+
+
 class TestSearch:
     """Test SoundCloudProvider.search()."""
 
     def test_search_empty_response(self, provider, mocker):
-        """Test search with empty response."""
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {"entries": []}
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+        """Empty collections across the query ladder yield no matches."""
+        fetch = mocker.patch.object(provider, "_fetch_collection", return_value=[])
 
         results = provider.search("Artist", "Album", limit=5)
 
         assert results == []
-        mock_ydl.extract_info.assert_called_once()
-        args = mock_ydl.extract_info.call_args[0]
-        assert "scsearch5:Artist Album" in args[0]
+        # All ladder queries tried against the albums endpoint.
+        assert fetch.call_args_list[0].args[0] == "search/albums"
 
-    def test_search_returns_all_valid_entries(self, provider, mocker):
-        """Test that search returns all entries with url+title, since scsearch
-        returns track-level entries (_type='url'), not set-level playlists."""
-        entries = [
-            {
-                "_type": "playlist",
-                "url": "https://soundcloud.com/artist/sets/album",
-                "title": "Album Title",
-                "uploader": "Artist",
-                "playlist_count": 10,
-            },
-            {
-                "_type": "url",
-                "url": "https://soundcloud.com/artist/track",
-                "title": "Single Track",
-                "uploader": "Artist",
-            },
-            {
-                # Entry without URL should be filtered by parse_search_entry
-                "title": "No URL Entry",
-                "uploader": "Artist",
-            },
-        ]
-
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {"entries": entries}
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+    def test_search_hits_albums_endpoint_only_by_default(self, provider, mocker):
+        """Default (include_playlists off) queries only search/albums."""
+        item = _album_item("https://soundcloud.com/u/sets/album", "Artist - Album (2018)")
+        fetch = mocker.patch.object(provider, "_fetch_collection", return_value=[item])
 
         results = provider.search("Artist", "Album", limit=5)
 
-        assert len(results) == 2
-        assert results[0].title == "Album Title"
-        assert results[1].title == "Single Track"
+        assert len(results) == 1
+        assert results[0].title == "Artist - Album (2018)"
+        assert all(call.args[0] == "search/albums" for call in fetch.call_args_list)
+
+    def test_search_parses_set_fields(self, provider, mocker):
+        """Match fields come from the set item: artist from title, year from date."""
+        item = _album_item(
+            "https://soundcloud.com/u/sets/album",
+            "The Band - Greatest Hits (2018)",
+            user="User 618407895",
+            tracks=6,
+            cover="http://art.jpg",
+        )
+        mocker.patch.object(provider, "_fetch_collection", return_value=[item])
+
+        results = provider.search("The Band", "Greatest Hits", limit=5)
+
+        m = results[0]
+        assert m.url == "https://soundcloud.com/u/sets/album"
+        assert m.artists == "The Band"  # from title, not the junk uploader
+        assert m.year == 2018
+        assert m.track_count == 6
+        assert m.cover_url == "http://art.jpg"
+
+    def test_search_query_ladder_broadens_on_empty(self, provider, mocker):
+        """A zero-result query advances to a broader one; first non-empty wins."""
+        item = _album_item("https://soundcloud.com/u/sets/a", "Band - 1917 (2018)")
+        # First (longest) query empty, second returns a hit.
+        fetch = mocker.patch.object(provider, "_fetch_collection", side_effect=[[], [item], []])
+
+        results = provider.search(
+            "Кобыла и Трупоглазые Жабы Искали Цезию, Нашли Поздно Утром Свистящего Хна",
+            "1917",
+            limit=5,
+        )
+
+        assert len(results) == 1
+        # Stopped after the second query produced results (3rd not called).
+        assert fetch.call_count == 2
+
+    def test_search_includes_playlists_when_enabled(self, ytdlp_options, mocker):
+        """With the option on, playlist hits are appended after album hits."""
+        ytdlp_options.soundcloud_include_playlists = True
+        provider = SoundCloudProvider(ytdlp_options)
+
+        album = _album_item("https://soundcloud.com/u/sets/album", "Band - Album")
+        playlist = _album_item("https://soundcloud.com/v/sets/mix", "Band Collection")
+
+        def fake_fetch(endpoint, query, limit):
+            return [album] if endpoint == "search/albums" else [playlist]
+
+        mocker.patch.object(provider, "_fetch_collection", side_effect=fake_fetch)
+
+        results = provider.search("Band", "Album", limit=5)
+
+        assert [m.title for m in results] == ["Band - Album", "Band Collection"]
+
+    def test_search_dedupes_by_url(self, ytdlp_options, mocker):
+        """The same set URL from albums and playlists is returned once."""
+        ytdlp_options.soundcloud_include_playlists = True
+        provider = SoundCloudProvider(ytdlp_options)
+
+        item = _album_item("https://soundcloud.com/u/sets/album", "Band - Album")
+        mocker.patch.object(provider, "_fetch_collection", return_value=[item])
+
+        results = provider.search("Band", "Album", limit=5)
+
+        assert len(results) == 1
+
+    def test_search_respects_limit(self, provider, mocker):
+        """No more than `limit` matches are returned."""
+        items = [
+            _album_item(f"https://soundcloud.com/u/sets/a{i}", f"Band - A{i}") for i in range(10)
+        ]
+        mocker.patch.object(provider, "_fetch_collection", return_value=items)
+
+        results = provider.search("Band", "Album", limit=3)
+
+        assert len(results) == 3
 
     def test_search_exception_propagates(self, provider, mocker):
-        """Test that search exceptions propagate to the caller for error isolation."""
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.side_effect = Exception("Network error")
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+        """Search exceptions propagate to the caller for per-provider error isolation."""
+        mocker.patch.object(provider, "_fetch_collection", side_effect=Exception("Network error"))
 
         with pytest.raises(Exception, match="Network error"):
             provider.search("Artist", "Album", limit=5)
-
-    def test_search_none_entries_returns_empty(self, provider, mocker):
-        """Test that search with None entries returns empty list."""
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = None
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        results = provider.search("Artist", "Album", limit=5)
-
-        assert results == []
-
-    def test_search_limit_parameter(self, provider, mocker):
-        """Test that search uses the limit parameter in the query."""
-        mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = {"entries": []}
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
-
-        provider.search("Artist", "Album", limit=3)
-
-        args = mock_ydl.extract_info.call_args[0]
-        assert "scsearch3:" in args[0]
 
 
 class TestDownload:
@@ -254,27 +284,24 @@ class TestDownload:
         assert "progress_hooks" not in ydl_opts
         assert "logger" not in ydl_opts
 
-    def test_download_calls_repair_tags(self, provider, tmp_path, mocker):
-        """Test that download calls repair_tags_from_info with correct arguments."""
+    def test_download_uses_lidarr_dir_for_tags(self, provider, mocker):
+        """download() repairs tags on the Lidarr-named dir, forcing album identity.
+
+        The directory is derived from the Match (Lidarr names), NOT the source's
+        own metadata in info — so a SoundCloud set title in info is irrelevant.
+        The Lidarr names are passed as overrides for album/albumartist.
+        """
         match = Match(
             source="soundcloud",
-            url="https://soundcloud.com/artist/sets/album",
+            url="https://soundcloud.com/uploader/sets/xyz",
             title="Album",
             artists="Artist",
             cover_url=None,
             year=2023,
             track_count=10,
         )
-
-        album_dir = tmp_path / "Artist" / "Album"
-        album_dir.mkdir(parents=True)
-
-        info = {
-            "title": "Album",
-            "uploader": "Artist",
-            "requested_downloads": [{"filepath": str(album_dir / "01.flac")}],
-            "entries": [{"title": "Track 1", "artist": "Artist"}],
-        }
+        # Source metadata title differs from the Lidarr name — must be ignored.
+        info = {"title": "Some Set Title (2018)", "uploader": "User 618407895", "entries": []}
 
         mock_ydl = MagicMock()
         mock_ydl.extract_info.return_value = info
@@ -286,38 +313,71 @@ class TestDownload:
 
         result = provider.download(match, quality=None, log=None)
 
+        expected_dir = album_output_dir(provider._opts.download_dir, "Artist", "Album")
         assert result is True
         mock_repair.assert_called_once()
-        call_args = mock_repair.call_args
-        assert call_args[0][0] == album_dir
-        assert call_args[0][1] == info
+        assert mock_repair.call_args[0][0] == expected_dir
+        assert mock_repair.call_args[0][1] == info
+        assert mock_repair.call_args.kwargs == {
+            "log": None,
+            "artist_override": "Artist",
+            "album_override": "Album",
+        }
 
-    def test_download_handles_missing_filepath(self, provider, mocker):
-        """Test download handles missing filepath gracefully."""
+    def test_download_outtmpl_targets_lidarr_dir(self, provider, mocker):
+        """The yt-dlp outtmpl directory is the Lidarr-named album dir."""
         match = Match(
             source="soundcloud",
-            url="https://soundcloud.com/artist/sets/album",
+            url="https://soundcloud.com/uploader/sets/xyz",
             title="Album",
             artists="Artist",
             cover_url=None,
             year=2023,
             track_count=10,
         )
-
-        info = {"title": "Album", "uploader": "Artist", "entries": []}
-
         mock_ydl = MagicMock()
-        mock_ydl.extract_info.return_value = info
+        mock_ydl.extract_info.return_value = {"entries": []}
         mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
         mock_ydl.__exit__ = MagicMock(return_value=False)
-        mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+        mock_ydl_class = mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+        mocker.patch("albfetcharr.sources.soundcloud.repair_tags_from_info")
 
-        mock_repair = mocker.patch("albfetcharr.sources.soundcloud.repair_tags_from_info")
+        provider.download(match, quality=None, log=None)
 
-        result = provider.download(match, quality=None, log=None)
+        ydl_opts = mock_ydl_class.call_args[0][0]
+        expected_dir = album_output_dir(provider._opts.download_dir, "Artist", "Album")
+        # Track number falls back to playlist position (SoundCloud tracks lack track_number).
+        assert ydl_opts["outtmpl"] == str(
+            expected_dir / "%(track_number,playlist_index)02d - %(title)s.%(ext)s"
+        )
 
-        assert result is True
-        mock_repair.assert_not_called()
+    def test_download_installs_set_progress_hook(self, provider, mocker):
+        """on_progress wires a per-track progress hook into yt-dlp opts."""
+        match = Match(
+            source="soundcloud",
+            url="https://soundcloud.com/uploader/sets/xyz",
+            title="Album",
+            artists="Artist",
+            cover_url=None,
+            year=2023,
+            track_count=10,
+        )
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {"entries": []}
+        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_ydl.__exit__ = MagicMock(return_value=False)
+        mock_ydl_class = mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
+        mocker.patch("albfetcharr.sources.soundcloud.repair_tags_from_info")
+
+        provider.download(match, quality=None, log=None, on_progress=lambda p: None)
+
+        ydl_opts = mock_ydl_class.call_args[0][0]
+        assert "progress_hooks" in ydl_opts
+        assert len(ydl_opts["progress_hooks"]) == 1
+
+    def test_streams_progress_flag(self, provider):
+        """SoundCloud reports per-track progress, so the UI gets a real bar."""
+        assert provider.streams_progress is True
 
 
 class TestCookies:
@@ -330,9 +390,20 @@ class TestCookies:
     """
 
     def _capture_ydl_opts(self, mocker):
-        """Patch yt_dlp.YoutubeDL and return the mock class to inspect ydl_opts."""
+        """Patch yt_dlp.YoutubeDL and return the mock class to inspect ydl_opts.
+
+        Configures the search path (get_info_extractor → _call_api → empty
+        collection) and the download path (extract_info) so search() and
+        download() both complete and the ydl_opts passed to YoutubeDL can be
+        inspected.
+        """
         mock_ydl = MagicMock()
         mock_ydl.extract_info.return_value = {"entries": []}
+        mock_ie = MagicMock()
+        mock_ie._API_V2_BASE = "https://api-v2.soundcloud.com/"
+        mock_ie._HEADERS = {}
+        mock_ie._call_api.return_value = {"collection": []}
+        mock_ydl.get_info_extractor.return_value = mock_ie
         mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
         mock_ydl.__exit__ = MagicMock(return_value=False)
         return mocker.patch("yt_dlp.YoutubeDL", return_value=mock_ydl)
@@ -418,6 +489,23 @@ class TestCookies:
 
         ydl_opts = mock_ydl_class.call_args[0][0]
         assert ydl_opts["cookiefile"] == str(cookies)
+
+
+class TestYtDlpApiSurface:
+    """Guard the yt-dlp-internal attributes _fetch_collection relies on.
+
+    search() borrows the SoundcloudSearch extractor's `_call_api`, `_API_V2_BASE`
+    and `_HEADERS` to reach the album/playlist endpoints. These are private, so a
+    yt-dlp upgrade that renames them should fail here loudly rather than silently
+    returning no results.
+    """
+
+    def test_soundcloud_search_extractor_exposes_expected_api(self):
+        ydl = yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True})
+        ie = ydl.get_info_extractor("SoundcloudSearch")
+        assert hasattr(ie, "_call_api")
+        assert isinstance(ie._API_V2_BASE, str) and ie._API_V2_BASE
+        assert hasattr(ie, "_HEADERS")
 
 
 class TestProvider:

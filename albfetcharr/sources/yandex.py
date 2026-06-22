@@ -7,6 +7,7 @@ from typing import ClassVar
 from yandex_music import Client
 
 from albfetcharr.config import YandexOptions
+from albfetcharr.download.locator import album_relpath
 from albfetcharr.sources.base import LogFn, Match, ProgressFn, SourceProvider
 
 
@@ -122,7 +123,7 @@ class YandexMusicProvider(SourceProvider):
         if log is None:
             log = print
 
-        cmd = self._build_cmd(match.url, quality_override=quality)
+        cmd = self._build_cmd(match, quality_override=quality)
         log(f"Downloading: {match.url}")
 
         try:
@@ -158,12 +159,25 @@ class YandexMusicProvider(SourceProvider):
             log(f"Download error: {type(e).__name__}")
             return False
 
-    def _build_cmd(self, url: str, quality_override: str | None = None) -> list[str]:
-        """Build yandex-music-downloader command."""
+    def _build_cmd(self, match: Match, quality_override: str | None = None) -> list[str]:
+        """Build yandex-music-downloader command.
+
+        Pins ``--path-pattern`` to the Lidarr-requested artist/album (from the
+        Match) as literal directory segments, keeping the tool's per-track
+        ``#number - #title`` filename. The tool's default pattern derives the
+        directory from Yandex's own metadata (``#album-artist/#album``), which
+        can diverge from the Lidarr names and break the import match — the shared
+        ``album_relpath`` rule keeps the on-disk layout identical across all
+        providers. Placeholders (``#``) only appear in the file portion, so the
+        sanitized literal segments are never reinterpreted.
+        """
+        path_pattern = f"{album_relpath(match.artists, match.title)}/#number - #title"
         cmd = [
             "yandex-music-downloader",
             "--dir",
             self._options.download_dir,
+            "--path-pattern",
+            path_pattern,
             "--token",
             self._token,
             "--quality",
@@ -195,5 +209,5 @@ class YandexMusicProvider(SourceProvider):
         if self._options.unsafe_path:
             cmd.append("--unsafe-path")
 
-        cmd += ["--url", url]
+        cmd += ["--url", match.url]
         return cmd

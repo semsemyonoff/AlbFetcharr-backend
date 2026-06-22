@@ -8,7 +8,7 @@ from mutagen import File as MutagenFile
 
 from albfetcharr.config import YtDlpOptions
 from albfetcharr.download.locator import AUDIO_EXTENSIONS
-from albfetcharr.sources.base import LogFn, Match
+from albfetcharr.sources.base import DownloadProgress, LogFn, Match, ProgressFn
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,37 @@ def make_progress_hook(log: LogFn):
             log(f"Downloaded {percent} at {speed}")
         elif info["status"] == "finished":
             log(f"Downloaded: {info.get('filename', 'unknown')}")
+
+    return hook
+
+
+def make_set_progress_hook(on_progress: ProgressFn):
+    """Create a yt-dlp progress hook that reports per-track album progress.
+
+    For a set/playlist download (SoundCloud), yt-dlp fires the hook per entry; on
+    each entry's ``finished`` status its ``info_dict`` carries ``playlist_index``
+    (1-based position) and ``n_entries`` (total tracks). We translate that into a
+    ``DownloadProgress`` so the UI renders a real, climbing bar instead of the
+    frontend's bare-"downloading" 50% bucket. Entries without playlist metadata
+    (a single-track URL) are ignored — those legitimately have no album progress.
+    """
+
+    def hook(info: dict):
+        if info.get("status") != "finished":
+            return
+        entry = info.get("info_dict") or {}
+        index = entry.get("playlist_index")
+        total = entry.get("n_entries")
+        if not index or not total:
+            return
+        on_progress(
+            DownloadProgress(
+                completed=index,
+                total=total,
+                downloaded=index,
+                message=f"Downloaded track {index}/{total}",
+            )
+        )
 
     return hook
 
@@ -207,19 +238,37 @@ def album_dir_from_info(info: dict) -> Path | None:
     return None
 
 
-def repair_tags_from_info(album_dir: Path, info_dict: dict, log: LogFn | None = None) -> None:
+def repair_tags_from_info(
+    album_dir: Path,
+    info_dict: dict,
+    log: LogFn | None = None,
+    *,
+    artist_override: str | None = None,
+    album_override: str | None = None,
+) -> None:
     """Repair missing or incomplete tags in audio files from yt-dlp metadata.
 
-    Iterates over audio files in album_dir and ensures that each has the required
-    tags (artist, album, title, tracknumber). Missing fields are filled from:
+    Iterates over audio files in album_dir ONCE and ensures that each has the
+    required tags (artist, album, title, tracknumber). Missing fields are filled
+    from:
     - info_dict["entries"][i] (for per-track fields)
     - info_dict (for album-level fields)
     - filename position (for tracknumber as fallback)
+
+    Album identity overrides (the Lidarr-requested names) are applied in the same
+    pass so the on-disk tags match what Lidarr's import looks up — the source's
+    own album/uploader metadata (a SoundCloud set title, a re-uploader name) is
+    what breaks matching:
+    - album_override: force the ``album`` tag (overwrite, not fill-if-missing).
+    - artist_override: force ``albumartist``, and use it as the ``artist`` fill
+      value when a track has none (a track may still credit a featured artist).
 
     Args:
         album_dir: Path to the directory containing downloaded audio files.
         info_dict: The info_dict from yt_dlp.YoutubeDL.extract_info(..., download=True).
         log: Optional callback for progress/repair messages.
+        artist_override: Lidarr artist name to force as albumartist / artist-fallback.
+        album_override: Lidarr album name to force as the album tag.
     """
 
     def _log(msg: str) -> None:
@@ -263,11 +312,19 @@ def repair_tags_from_info(album_dir: Path, info_dict: dict, log: LogFn | None = 
             if track_entry and track_entry.get("artist"):
                 artist = track_entry["artist"]
             else:
-                artist = info_dict.get("uploader", "Unknown")
+                artist = artist_override or info_dict.get("uploader", "Unknown")
             tags["artist"] = [artist]
             repaired.append(f"artist={artist}")
 
-        if not tags.get("album"):
+        if artist_override and tags.get("albumartist") != [artist_override]:
+            tags["albumartist"] = [artist_override]
+            repaired.append(f"albumartist={artist_override}")
+
+        if album_override:
+            if tags.get("album") != [album_override]:
+                tags["album"] = [album_override]
+                repaired.append(f"album={album_override}")
+        elif not tags.get("album"):
             tags["album"] = [album_title]
             repaired.append(f"album={album_title}")
 

@@ -5,7 +5,21 @@ from unittest.mock import MagicMock
 import pytest
 
 from albfetcharr.config import YandexOptions
+from albfetcharr.sources.base import Match
 from albfetcharr.sources.yandex import YandexMusicProvider
+
+
+def _match(url="https://music.yandex.ru/album/12345", artist="The Artist", title="The Album"):
+    """Build a download Match (title/artists are the Lidarr-requested names)."""
+    return Match(
+        source="yandex",
+        url=url,
+        title=title,
+        artists=artist,
+        cover_url=None,
+        year=None,
+        track_count=None,
+    )
 
 
 @pytest.fixture
@@ -40,7 +54,7 @@ class TestBuildCmd:
 
     def test_build_cmd_basic(self, provider):
         """Test basic command with defaults."""
-        cmd = provider._build_cmd("https://music.yandex.ru/album/12345")
+        cmd = provider._build_cmd(_match())
         assert "yandex-music-downloader" in cmd
         assert "--token" in cmd
         assert "test_token" in cmd
@@ -51,9 +65,21 @@ class TestBuildCmd:
 
     def test_build_cmd_quality_override(self, provider):
         """Test quality override."""
-        cmd = provider._build_cmd("https://music.yandex.ru/album/12345", quality_override="1")
+        cmd = provider._build_cmd(_match(), quality_override="1")
         idx = cmd.index("--quality")
         assert cmd[idx + 1] == "1"
+
+    def test_build_cmd_pins_path_pattern_to_lidarr_names(self, provider):
+        """--path-pattern bakes in the Lidarr artist/album as literal segments."""
+        cmd = provider._build_cmd(_match(artist="The Artist", title="The Album"))
+        idx = cmd.index("--path-pattern")
+        assert cmd[idx + 1] == "The Artist/The Album/#number - #title"
+
+    def test_build_cmd_sanitizes_path_pattern_segments(self, provider):
+        """Filesystem-hostile chars in Lidarr names are stripped from the pattern."""
+        cmd = provider._build_cmd(_match(artist="AC/DC", title="Back: In/Black"))
+        idx = cmd.index("--path-pattern")
+        assert cmd[idx + 1] == "ACDC/Back InBlack/#number - #title"
 
     def test_build_cmd_all_flags(self):
         """Test command with all optional flags enabled."""
@@ -74,19 +100,13 @@ class TestBuildCmd:
             download_dir="/music",
         )
         provider = YandexMusicProvider(token="test", options=options)
-        cmd = provider._build_cmd("https://music.yandex.ru/album/999")
+        cmd = provider._build_cmd(_match(url="https://music.yandex.ru/album/999"))
 
         assert "--embed-cover" in cmd
         assert "--stick-to-artist" in cmd
         assert "--only-music" in cmd
         assert "--unsafe-path" in cmd
-        assert "--path-pattern" not in cmd
         assert "/music" in cmd
-
-    def test_build_cmd_never_emits_path_pattern(self, provider):
-        """Yandex command never emits --path-pattern (falls back to tool default)."""
-        cmd = provider._build_cmd("https://music.yandex.ru/album/12345")
-        assert "--path-pattern" not in cmd
 
     def test_build_cmd_no_skip_existing(self):
         """Test command when skip_existing is False."""
@@ -107,7 +127,7 @@ class TestBuildCmd:
             download_dir="/downloads",
         )
         provider = YandexMusicProvider(token="test", options=options)
-        cmd = provider._build_cmd("https://music.yandex.ru/album/12345")
+        cmd = provider._build_cmd(_match())
         assert "--skip-existing" not in cmd
 
 

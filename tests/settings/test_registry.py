@@ -68,8 +68,8 @@ class TestCatalogIntegrity:
                 assert s.choices is None, f"{s.key!r} (type={s.type!r}) should have choices=None"
 
     def test_catalog_count(self):
-        """32 settings (3 Tier-1 + 16 Tier-2 + 10 Tier-3 + 2 Tier-4 + 1 Server)."""
-        assert len(registry.all_settings()) == 32
+        """33 settings (3 Tier-1 + 17 Tier-2 + 10 Tier-3 + 2 Tier-4 + 1 Server)."""
+        assert len(registry.all_settings()) == 33
 
 
 class TestAccessors:
