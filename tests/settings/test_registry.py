@@ -389,7 +389,7 @@ class TestSpecificSettings:
         assert "vorbis" not in s.choices
         assert "aac" not in s.choices
         assert "wav" not in s.choices
-        assert s.default == "opus"
+        assert s.default == "best"
         assert s.scope == "session"
 
     def test_default_lang_choices(self):
