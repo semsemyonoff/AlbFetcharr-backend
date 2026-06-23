@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "albfetcharr"
-version = "0.0.1"
+version = "0.1.0"
 description = "Bridge between Lidarr and music sources (Yandex Music, yt-dlp, etc.)"
 readme = "README.md"
 license = {text = "MIT"}
