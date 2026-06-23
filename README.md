@@ -1,375 +1,354 @@
-# AlbFetcharr
+# AlbFetcharr backend
 
-Сервис для автоматической загрузки wanted-альбомов из [Lidarr](https://lidarr.audio/) через [Яндекс Музыку](https://music.yandex.ru/), [YouTube Music](https://music.youtube.com/), [SoundCloud](https://soundcloud.com/) и [Bandcamp](https://bandcamp.com/). Разработан с поддержкой расширяемой модели источников.
+The application behind AlbFetcharr — a Flask service that reads Lidarr's
+**wanted** albums, searches and downloads them from
+[Yandex Music](https://music.yandex.ru/),
+[YouTube Music](https://music.youtube.com/),
+[SoundCloud](https://soundcloud.com/), and [Bandcamp](https://bandcamp.com/),
+and imports them back into [Lidarr](https://lidarr.audio/). It serves the HTTP
+API, the bundled SPA, and an equivalent CLI; sources are pluggable.
 
-## Возможности
+> **This repo is the service, not its deployment.** For self-hosting (the Docker
+> image, `docker-compose`, library mapping, Lidarr wiring, registries, and the
+> release process) see the deploy repo:
+> [`AlbFetcharr/deploy`](https://github.com/semsemyonoff/AlbFetcharr-deploy).
+> The React/Vite UI lives in its own repo: `AlbFetcharr/frontend`.
 
-- Получение списка wanted-альбомов из Lidarr API
-- Поиск альбомов в Яндекс Музыке, YouTube Music, SoundCloud и Bandcamp
-- Загрузка через [yandex-music-downloader](https://github.com/llistochek/yandex-music-downloader) и [yt-dlp](https://github.com/yt-dlp/yt-dlp) с выбором качества
-- Автоматический импорт загруженных альбомов в Lidarr (ManualImport + перенос обложек)
-- Веб-интерфейс с пошаговым рабочим процессом (выбор → результаты → загрузка) и поддержкой нескольких источников
+## How it works
 
-## Установка
+1. **Wanted** — fetch the list of missing albums from the Lidarr API.
+2. **Search** — for each album, query the enabled sources and rank candidates.
+3. **Download** — fetch the chosen candidate at the chosen quality/format
+   (Yandex via `yandex-music-downloader`; the rest via `yt-dlp`), writing tagged
+   files into the download dir.
+4. **Import** — hand the album to Lidarr's ManualImport API and copy cover art
+   next to the imported album (translating Lidarr's path back through the
+   library map).
 
-### Docker Compose
+The same flow is available three ways: the step-by-step web UI, the HTTP API,
+and the `albfetcharr` CLI.
 
-Пример `docker-compose.yml` с AlbFetcharr и Lidarr:
-
-```yaml
-services:
-  lidarr:
-    image: linuxserver/lidarr
-    container_name: lidarr
-    environment:
-      - PUID=1000
-      - PGID=1000
-    volumes:
-      - ./lidarr/config:/config
-      - /path/to/music:/data/library
-      - /path/to/downloads:/data/downloads
-    ports:
-      - "8686:8686"
-    restart: unless-stopped
-
-  albfetcharr:
-    image: semsemyonoff/albfetcharr
-    container_name: albfetcharr
-    environment:
-      - YANDEX_MUSIC_TOKEN=your_token_here
-      - YANDEX_MUSIC_QUALITY=2
-      - LIDARR_URL=http://lidarr:8686
-      - LIDARR_API_KEY=your_api_key_here
-      - ALBFETCHARR_LIDARR_IMPORT_PATH=/data/downloads/alb
-      - ALBFETCHARR_LIBRARY_MAP=/data/library=/libraries/music
-    volumes:
-      - /path/to/downloads/alb:/downloads
-      - /path/to/music:/libraries/music
-    ports:
-      - "5000:5000"
-    restart: unless-stopped
-```
-
-### Директории и маппинг библиотек
-
-AlbFetcharr работает с двумя типами директорий:
-
-- **Загрузки** — папка, куда yandex-music-downloader скачивает альбомы (монтируется как `/downloads`)
-- **Библиотеки** — корневые папки Lidarr (root folders), куда Lidarr импортирует музыку
-
-Lidarr может использовать несколько root folders (например, `/data/library` и `/data/soundtracks`). Пути внутри Lidarr и внутри AlbFetcharr могут различаться, поэтому используется маппинг `ALBFETCHARR_LIBRARY_MAP`:
+## Architecture
 
 ```
-ALBFETCHARR_LIBRARY_MAP=<путь_в_lidarr>=<путь_в_albfetcharr>,<путь2_в_lidarr>=<путь2_в_albfetcharr>
+albfetcharr/
+├── cli.py            # `albfetcharr` entry point: wanted / download subcommands
+├── config.py         # environment + settings-store resolution into a typed config
+├── version.py        # APP_VERSION reporting (see "Versioning")
+├── logging_config.py # app log setup (ALBFETCHARR_LOG_LEVEL / app_log_level)
+├── sources/          # pluggable source providers
+│   ├── base.py           # Source protocol: search() + download()
+│   ├── yandex.py         # Yandex Music (yandex-music API + yandex-music-downloader)
+│   ├── youtube_music.py  # YouTube Music (ytmusicapi search + yt-dlp download)
+│   ├── soundcloud.py     # SoundCloud (yt-dlp)
+│   ├── bandcamp.py       # Bandcamp (autocomplete API + yt-dlp)
+│   └── ytdlp_base.py     # shared yt-dlp plumbing for the yt-dlp-backed sources
+├── download/         # locator (path layout) + tags (metadata writing)
+├── lidarr/           # client (API), importer (ManualImport), library_map
+├── settings/         # optional persistent settings store
+│   ├── store.py / registry.py / resolver.py  # SQLite store + key registry + precedence
+│   ├── crypto.py     # Fernet encryption for secret values
+│   └── file_status.py# oauth/cookies file presence checks
+└── web/              # app (factory), routes, schemas, spec (OpenAPI), static/
 ```
 
-Маппинг нужен для переноса обложек после импорта — AlbFetcharr получает путь альбома из Lidarr API и транслирует его в локальный путь через маппинг.
+A **source** implements `search(query)` → ranked candidates and
+`download(candidate)` → tagged files. Adding a source is implementing that
+protocol and registering it; the UI, CLI, and import flow are source-agnostic.
 
-**Пример с одной библиотекой:**
+## Sources
 
-| Контейнер | Путь | Хост |
-|---|---|---|
-| Lidarr | `/data/library` | `/mnt/music` |
-| Lidarr | `/data/downloads` | `/mnt/downloads` |
-| AlbFetcharr | `/downloads` | `/mnt/downloads/alb` |
-| AlbFetcharr | `/libraries/music` | `/mnt/music` |
+| Source        | Requirement          | Notes                                                                          |
+|---------------|----------------------|--------------------------------------------------------------------------------|
+| Yandex Music  | `YANDEX_MUSIC_TOKEN` | Most accurate search, best metadata; AAC 64/192 or FLAC                         |
+| YouTube Music | on by default        | `ytmusicapi` search (anonymous works but gets bot-gated → empty results; OAuth recommended); per-track download via `yt-dlp` |
+| SoundCloud    | on by default        | Sets/playlists; search can be loose, tags may be incomplete                    |
+| Bandcamp      | on by default        | Real albums with correct tags; mostly indie/self-releases; free stream is MP3 128 |
 
-```
-ALBFETCHARR_LIBRARY_MAP=/data/library=/libraries/music
-ALBFETCHARR_LIDARR_IMPORT_PATH=/data/downloads/alb
-```
+### Yandex Music
+- Requires a valid auth token. Best metadata quality.
+- Quality via `YANDEX_MUSIC_QUALITY`: `0` AAC 64, `1` AAC 192, `2` FLAC.
 
-**Пример с несколькими библиотеками:**
+### YouTube Music
+- Search uses [ytmusicapi](https://github.com/sigma67/ytmusicapi). It works
+  anonymously, but YouTube increasingly bot-gates anonymous requests — the call
+  succeeds yet returns **empty results**. The fix is to authenticate search via
+  OAuth (optional; see [OAuth for YouTube Music search](#oauth-for-youtube-music-search)).
+- Download is per-track (`youtube.com/watch?v=…`) via
+  [yt-dlp](https://github.com/yt-dlp/yt-dlp); tags are written from the ytmusicapi
+  album metadata (`title`, `artist`, `album`, `albumartist`, `tracknumber`, `date`).
+- YouTube downloads need a **JS runtime `deno`** (on `PATH`) and the
+  **`yt-dlp-ejs`** package: yt-dlp 2026.x uses them to solve YouTube's
+  signature/n-challenge. Without them some formats are unavailable and downloads
+  fail with `HTTP 403`. Both are baked into the Docker image; running outside
+  Docker, install `deno` and `pip install yt-dlp-ejs` (already a dependency).
+- Each track is retried on transient errors (e.g. `HTTP 403`), controlled by
+  `ALBFETCHARR_YTDLP_RETRIES` (default 3).
+- Modern YouTube often requires cookies ("Sign in to confirm you're not a bot").
+  If you hit that, supply a `cookies.txt` (see [Cookies for YouTube](#cookies-for-youtube)).
+- Tracks that stay unavailable after all retries are skipped and the album
+  imports **partially** (`partial: N/M` in the log; marked *Partial*, not
+  *Failed*, in the UI); the missing tracks stay on the wanted list.
 
-```
-ALBFETCHARR_LIBRARY_MAP=/data/music=/libraries/music,/data/soundtracks=/libraries/soundtracks
-```
+### SoundCloud
+- Uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for search and download; needs
+  ffmpeg for audio conversion.
+- Search can be inaccurate — **review results in the UI before downloading.**
+- `artist` / `album` / `title` / `tracknumber` come from the playlist metadata;
+  loosely tagged sources may need manual fixups before import.
 
-При запуске AlbFetcharr проверяет root folders через Lidarr API и выводит предупреждение, если для какой-либо из них нет записи в маппинге.
+### Bandcamp
+- Search goes through Bandcamp's public autocomplete API (no keys, albums-only
+  filter); album download is via `yt-dlp` (`BandcampAlbumIE`), with real track
+  numbers and tags.
+- The catalog is mostly **indie/self-releases** — major-label artists are usually
+  absent, and mainstream queries often surface third-party tributes/covers, so
+  search checks the artist name and drops clear mismatches, ranking by closeness.
+- Free stream is **MP3 128 kbit/s**; full/lossless needs a purchase. Needs ffmpeg.
 
-### Настройка Lidarr
+### Cookies for YouTube
 
-1. Получите API-ключ Lidarr: **Settings → General → API Key**
-2. Убедитесь, что в Lidarr есть wanted-альбомы (альбомы со статусом «Missing»)
-3. AlbFetcharr использует ManualImport API для импорта загруженных альбомов — дополнительная настройка Download Client в Lidarr не требуется
+YouTube downloads may require cookies from a signed-in account (the *"Sign in to
+confirm you're not a bot"* error). Cookie support is **optional**:
 
-### Запуск
+1. Export cookies in Netscape format (`cookies.txt`) from a browser signed in to
+   YouTube — e.g. the
+   [Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY)
+   extension or `yt-dlp --cookies-from-browser`.
+2. Place the file where the process can read it and set its path in
+   `ALBFETCHARR_YTDLP_COOKIES` (a container path when running in Docker).
+3. Restart. The file is picked up only if it exists.
 
-```bash
-docker compose up -d
-```
+If unset or missing, nothing changes: the other sources work as before. YouTube
+*search* does not use these cookies — for that, see OAuth below.
 
-Веб-интерфейс будет доступен по адресу `http://localhost:5000`.
+### OAuth for YouTube Music search
 
-## Источники
+Anonymous `ytmusicapi` search eventually gets bot-gated by YouTube — the request
+succeeds but **results are empty**. To stop being anonymous, authenticate search
+via OAuth. This is **optional**: with no file, search stays anonymous.
 
-AlbFetcharr поддерживает несколько источников для поиска и загрузки альбомов:
+You need two things: a **Google OAuth client** (`client_id` + `client_secret`)
+and a **token file** (`oauth.json`):
 
-| Источник | Требования | Заметки |
-|---|---|---|
-| **Yandex Music** | `YANDEX_MUSIC_TOKEN` | Наиболее точный поиск, полная информация об альбомах и исполнителях |
-| **YouTube Music** | Включен по умолчанию | Поиск через `ytmusicapi` (работает анонимно, но YouTube часто ограничивает анонимные запросы — рекомендуется OAuth, см. ниже); загрузка по отдельным трекам, опционально с `cookies.txt` (см. ниже) |
-| **SoundCloud** | Включен по умолчанию | Для сетов (плейлистов), поиск может быть менее точным; теги могут быть неполными |
-| **Bandcamp** | Включен по умолчанию | Настоящие альбомы с корректными тегами; каталог в основном инди/селф-релизы (мейджоров обычно нет), бесплатный поток — MP3 128 |
+- `client_id` / `client_secret` identify the *application*. They grant no account
+  access on their own and aren't handed out as a file — create them once in
+  Google Cloud (step 1).
+- `oauth.json` is the *sign-in itself*: an `access_token` / `refresh_token` bound
+  to your account, generated by Google in exchange for the client id/secret plus a
+  browser authorization (step 2). It self-refreshes and doesn't expire like cookies.
 
-### Особенности источников
-
-**Яндекс Музыка**
-- Требует действительный токен авторизации
-- Лучшее качество метаданных
-- Поддержка различных форматов (AAC 64/192, FLAC)
-
-**YouTube Music**
-- Поиск выполняется через [ytmusicapi](https://github.com/sigma67/ytmusicapi). Работает и без авторизации, но YouTube всё чаще «бот-гейтит» анонимные запросы — поиск начинает возвращать **пустые результаты**. Лекарство — авторизация через OAuth (опционально, см. [OAuth для поиска YouTube Music](#oauth-для-поиска-youtube-music))
-- Загрузка идёт по отдельным трекам альбома (`youtube.com/watch?v=…`) через [yt-dlp](https://github.com/yt-dlp/yt-dlp), теги пишутся из метаданных альбома ytmusicapi (`title`, `artist`, `album`, `albumartist`, `tracknumber`, `date`)
-- Для загрузки YouTube нужны **JavaScript-рантайм `deno`** (на `PATH`) и пакет **`yt-dlp-ejs`**: yt-dlp 2026.x решает с их помощью signature/n-challenge YouTube. Без них часть форматов недоступна и загрузка падает с `HTTP 403`. В Docker-образ оба уже встроены; при запуске без Docker установите `deno` и `pip install yt-dlp-ejs`
-- Каждый трек скачивается с повторами при временных ошибках (например, `HTTP 403`) — число попыток задаётся `ALBFETCHARR_YTDLP_RETRIES` (по умолчанию 3)
-- Современный YouTube часто требует cookies при загрузке («Sign in to confirm you're not a bot»). Если вы столкнулись с этой ошибкой, передайте файл `cookies.txt` (см. [Cookies для YouTube](#cookies-для-youtube)). Без cookies поиск и загрузка остальных источников работают как прежде
-- Если какие-то треки недоступны или не скачались после всех попыток, они пропускаются, а альбом импортируется **частично** (в логе строка `partial: N/M`, в интерфейсе — пометка «Частично», а не «Ошибка»); недостающие треки остаются в списке wanted
-
-**SoundCloud**
-- Использует [yt-dlp](https://github.com/yt-dlp/yt-dlp) для поиска и загрузки
-- Требует ffmpeg для конвертации аудио
-- Поиск может возвращать неточные результаты — **рекомендуется проверить результаты в веб-интерфейсе перед загрузкой**
-- Теги `artist`, `album`, `title`, `tracknumber` заполняются из метаданных плейлиста; если источник слабо помечен, может потребоваться ручная корректировка перед импортом в Lidarr
-
-**Bandcamp**
-- Поиск идёт через публичный API автодополнения Bandcamp (без ключей/авторизации, фильтр «только альбомы»); загрузка альбома — через [yt-dlp](https://github.com/yt-dlp/yt-dlp) (`BandcampAlbumIE`), с настоящими номерами треков и тегами
-- Каталог Bandcamp в основном **инди и селф-релизы** — артистов мейджор-лейблов там обычно нет. На запросы по мейнстриму выдача часто содержит трибьюты/каверы сторонних аккаунтов; чтобы их не качать, поиск сверяет имя исполнителя и отбрасывает явные несовпадения, ранжируя по близости
-- Бесплатный поток — **MP3 128 kbit/s**; полное/lossless-качество доступно только при покупке
-- Требует ffmpeg для конвертации аудио; опционально использует общий `cookies.txt` (см. ниже)
-
-### Cookies для YouTube
-
-Загрузка из YouTube может потребовать cookies авторизованного аккаунта (ошибка *«Sign in to confirm you're not a bot»*). Поддержка cookies **опциональна**:
-
-1. Экспортируйте cookies в формате Netscape (`cookies.txt`) из браузера, где вы авторизованы на YouTube — например, расширением [Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY) или `yt-dlp --cookies-from-browser`.
-2. Положите файл в каталог, доступный контейнеру (например, рядом с загрузками), и укажите путь **внутри контейнера** в переменной `ALBFETCHARR_YTDLP_COOKIES`.
-3. Перезапустите сервис. Файл подхватывается автоматически только если он существует.
-
-Если переменная не задана или файл отсутствует, ничего не меняется: SoundCloud и Яндекс Музыка работают как прежде. Поиск YouTube эти cookies не использует — для него см. OAuth ниже.
-
-### OAuth для поиска YouTube Music
-
-Анонимный поиск через `ytmusicapi` со временем начинает «бот-гейтиться» YouTube — запрос отвечает успешно, но **результаты пустые**. Чтобы запросы не были анонимными, поиск можно авторизовать через OAuth. Это **опционально**: без файла всё работает как раньше (анонимно).
-
-Понадобятся две вещи: **OAuth-клиент Google** (`client_id` + `client_secret`) и **файл с токеном** (`oauth.json`). Важно понимать разницу:
-
-- `client_id` / `client_secret` — это «удостоверение приложения». Сами по себе доступа к аккаунту не дают и **не выдаются в виде готового файла** — их нужно один раз создать в Google Cloud руками (шаг 1).
-- `oauth.json` — это уже сам вход: токен (`access_token` / `refresh_token`), привязанный к вашему аккаунту. Его **генерирует** Google в обмен на client_id/secret + авторизацию в браузере (шаг 2). Токен сам обновляется и не протухает как cookies.
-
-1. **Создайте OAuth-клиент в Google Cloud.** В [Google Cloud Console](https://console.cloud.google.com/) → создайте проект → включите **YouTube Data API v3** → *Credentials* → *Create credentials* → *OAuth client ID* → тип **TVs and Limited Input devices**. Получите `client_id` и `client_secret`. (Раньше `ytmusicapi` использовал встроенный публичный client и этот шаг был не нужен, но Google его отозвал — теперь свой клиент обязателен.)
-2. **Сгенерируйте токен.** На любой машине с Python: `pip install ytmusicapi`, затем
+1. **Create an OAuth client.** In the
+   [Google Cloud Console](https://console.cloud.google.com/) → new project →
+   enable **YouTube Data API v3** → *Credentials* → *Create credentials* →
+   *OAuth client ID* → type **TVs and Limited Input devices**. Note the
+   `client_id` and `client_secret`. (ytmusicapi used to ship a public client, but
+   Google revoked it — your own client is now required.)
+2. **Generate the token.** On any machine with Python: `pip install ytmusicapi`, then
    ```bash
    ytmusicapi oauth --client-id <CLIENT_ID> --client-secret <CLIENT_SECRET>
    ```
-   Пройдите авторизацию в браузере по показанной ссылке. Команда создаст файл `oauth.json` с токеном.
-3. **Смонтируйте `oauth.json` в контейнер** по пути из `ALBFETCHARR_YTMUSIC_OAUTH` (по умолчанию `/config/ytmusic_oauth.json`). Это нужно **всегда** — это и есть сам токен. Файл подхватывается автоматически, только если существует; иначе поиск остаётся анонимным.
-4. **Дайте приложению client_id/secret** — одним из двух способов (на выбор, не оба):
-   - дописать в тот же `oauth.json` два поля: `"client_id": "...", "client_secret": "..."` (тогда всё в одном файле), **или**
-   - задать переменные `ALBFETCHARR_YTMUSIC_CLIENT_ID` и `ALBFETCHARR_YTMUSIC_CLIENT_SECRET`.
+   Authorize in the browser via the printed link. This writes `oauth.json`.
+3. **Make `oauth.json` available** at the path in `ALBFETCHARR_YTMUSIC_OAUTH`
+   (default `/config/ytmusic_oauth.json`). Always required — it is the token.
+   Picked up only if it exists; otherwise search stays anonymous.
+4. **Give the app the client id/secret** — either add `"client_id"` /
+   `"client_secret"` fields to `oauth.json`, **or** set
+   `ALBFETCHARR_YTMUSIC_CLIENT_ID` / `ALBFETCHARR_YTMUSIC_CLIENT_SECRET`. Then restart.
 
-   Это отдельный шаг от пункта 3: токен (`oauth.json`) обязателен в любом случае, а здесь вы лишь сообщаете, **откуда взять** client_id/secret к нему. После этого перезапустите сервис.
+The app reads the token as a dict and does **not** overwrite your file on refresh.
+If the file is broken or missing the client id/secret, search silently falls back
+to anonymous (with a warning in the logs). More on obtaining the token:
+[ytmusicapi OAuth docs](https://ytmusicapi.readthedocs.io/en/stable/setup/oauth.html).
 
-Приложение читает токен из файла как dict и **не перезаписывает** ваш файл при обновлении токена. Если файл повреждён или не хватает `client_id`/`client_secret`, поиск тихо откатывается к анонимному (в логах — предупреждение). Подробнее про получение токена — в [документации ytmusicapi](https://ytmusicapi.readthedocs.io/en/stable/setup/oauth.html).
+## HTTP API
 
-## Переменные окружения
+`gunicorn "albfetcharr.web.app:create_app()"` serves the API and the bundled SPA
+on port `5000`. Interactive API docs are at `/apidoc/scalar` (Scalar), with
+Swagger UI (`/apidoc/swagger`), Redoc (`/apidoc/redoc`), and the raw spec
+(`/apidoc/openapi.json`) alongside. Requests/responses are validated against the
+spec. `GET /api/version` reports the service version plus the bundled yt-dlp /
+yandex-music-downloader versions.
 
-### Обязательные
+The web UI is a three-step flow (the session ends when a download finishes):
 
-| Переменная | Описание |
-|---|---|
-| `YANDEX_MUSIC_TOKEN` | [Токен авторизации Яндекс Музыки](https://yandex-music.readthedocs.io/en/main/token.html) |
-| `LIDARR_URL` | URL Lidarr (например `http://lidarr:8686`) |
-| `LIDARR_API_KEY` | API-ключ Lidarr |
+1. **Select** — load the wanted list from Lidarr, filter/sort, pick sources.
+2. **Results** — search the selected albums across enabled sources; pick the best
+   match and a quality/format per album.
+3. **Download** — fetch with live progress (per-album bars, terminal log) and
+   auto-import into Lidarr (when `ALBFETCHARR_LIDARR_IMPORT_PATH` is set).
 
-### Сервис
+## CLI
 
-| Переменная | По умолчанию | Описание |
-|---|---|---|
-| `ALBFETCHARR_PORT` | `5000` | Порт веб-интерфейса на хосте |
-| `ALBFETCHARR_LIDARR_IMPORT_PATH` | — | Путь к загрузкам в контексте Lidarr (например `/data/downloads/alb`) |
-| `ALBFETCHARR_LIBRARY_MAP` | — | Маппинг путей библиотек: `lidarr_path=albfetcharr_path,...` |
-| `DOWNLOAD_DIR` | `/downloads` | Путь к папке загрузок внутри контейнера |
-| `CHOWN_DIRS` | `true` | Устанавливать владельца для папок при старте (`true` / `false`) |
-| `ALBFETCHARR_DEFAULT_LANG` | `en` | Язык UI по умолчанию (`en` / `ru`) |
-| `ALBFETCHARR_DEFAULT_THEME` | `system` | Тема UI по умолчанию (`system` / `light` / `dark`) |
-| `ALBFETCHARR_LOG_LEVEL` | `INFO` | Уровень логирования приложения: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. На `DEBUG` включается полное логирование запросов и ответов внутренних сервисов (HTTP-вызовы Lidarr и т. п.). Также доступно как настройка `app_log_level` (применяется без перезапуска) |
-
-### Параметры загрузки
-
-| Переменная | По умолчанию | Описание |
-|---|---|---|
-| `YANDEX_MUSIC_QUALITY` | `2` | Качество: `0` — AAC 64, `1` — AAC 192, `2` — FLAC |
-| `ALBFETCHARR_LYRICS_FORMAT` | `lrc` | Формат текста песни: `none`, `text`, `lrc` |
-| `ALBFETCHARR_COVER_RESOLUTION` | `400` | Разрешение обложки в пикселях или `original` |
-| `ALBFETCHARR_EMBED_COVER` | `0` | Встраивать обложку в аудиофайл (`0` / `1`) |
-| `ALBFETCHARR_SKIP_EXISTING` | `1` | Пропускать уже загруженные треки (`0` / `1`) |
-| `ALBFETCHARR_CLEAR_COMMENTS` | `0` | Удалять тег comments из скачанных треков (`0` / `1`) |
-| `ALBFETCHARR_DELAY` | `0` | Задержка между запросами (секунды) |
-| `ALBFETCHARR_STICK_TO_ARTIST` | `0` | Загружать альбомы только данного исполнителя (`0` / `1`) |
-| `ALBFETCHARR_ONLY_MUSIC` | `0` | Только музыка, без подкастов и аудиокниг (`0` / `1`) |
-| `ALBFETCHARR_COMPAT_LEVEL` | `1` | Уровень совместимости (`0` — `1`) |
-| `ALBFETCHARR_UNSAFE_PATH` | `0` | Не очищать путь от недопустимых символов (`0` / `1`) |
-| `ALBFETCHARR_YTDLP_FORMAT` | `opus` | Формат аудио для yt-dlp источников: `best` (без перекодирования), `opus`, `m4a`, `mp3` |
-| `ALBFETCHARR_YTDLP_QUALITY` | `192` | Битрейт для сжатых форматов (кбит/с); не используется для `best` |
-| `ALBFETCHARR_YTDLP_COOKIES` | — | Путь (внутри контейнера) к Netscape `cookies.txt` для загрузки YouTube/SoundCloud за бот-гейтом. Опционально; если не задан или файл отсутствует — cookies не используются (см. [Cookies для YouTube](#cookies-для-youtube)) |
-| `ALBFETCHARR_YTDLP_RETRIES` | `3` | Число попыток загрузки одного трека для yt-dlp источников при временных ошибках (например, `HTTP 403`). Минимум 1 (без повторов) |
-| `ALBFETCHARR_YTMUSIC_OAUTH` | `/config/ytmusic_oauth.json` | Путь (внутри контейнера) к OAuth-файлу `ytmusicapi` для авторизованного поиска YouTube Music. Используется только если файл существует; иначе поиск анонимный (см. [OAuth для поиска YouTube Music](#oauth-для-поиска-youtube-music)) |
-| `ALBFETCHARR_YTMUSIC_CLIENT_ID` | — | `client_id` OAuth-клиента Google для поиска YouTube Music (если не задан внутри самого OAuth-файла) |
-| `ALBFETCHARR_YTMUSIC_CLIENT_SECRET` | — | `client_secret` OAuth-клиента Google для поиска YouTube Music (если не задан внутри самого OAuth-файла) |
-| `ALBFETCHARR_ENABLE_YANDEX` | `1` | Включить Яндекс Музыку как источник (`1`/`true`/`yes` — включён, `0`/`false`/`no` — отключён) |
-| `ALBFETCHARR_ENABLE_YOUTUBE_MUSIC` | `1` | Включить YouTube Music источник (`1`/`true`/`yes` — включён, `0`/`false`/`no` — отключён) |
-| `ALBFETCHARR_ENABLE_SOUNDCLOUD` | `1` | Включить SoundCloud источник (`1`/`true`/`yes` — включён, `0`/`false`/`no` — отключён) |
-
-### Сетевые параметры (Яндекс Музыка)
-
-| Переменная | По умолчанию | Описание |
-|---|---|---|
-| `ALBFETCHARR_YANDEX_TIMEOUT` | `20` | Таймаут запроса к Яндексу (секунды). Ранее `ALBFETCHARR_TIMEOUT` |
-| `ALBFETCHARR_YANDEX_TRIES` | `20` | Количество попыток при сетевых ошибках Яндекса. Ранее `ALBFETCHARR_TRIES` |
-| `ALBFETCHARR_YANDEX_RETRY_DELAY` | `5` | Задержка между повторными попытками Яндекса (секунды). Ранее `ALBFETCHARR_RETRY_DELAY` |
-
-### Хранилище настроек
-
-AlbFetcharr поддерживает постоянное хранилище настроек в SQLite (опционально). Без него приложение работает в режиме «только переменные окружения» — поведение не отличается от предыдущих версий.
-
-| Переменная | По умолчанию | Описание |
-|---|---|---|
-| `ALBFETCHARR_DB_PATH` | `/config/albfetcharr.db` | Путь к SQLite-файлу хранилища настроек. Смонтируйте директорию `/config` на постоянный том, чтобы настройки пережили пересоздание контейнера |
-| `ALBFETCHARR_SECRET_KEY` | — | Fernet-ключ для шифрования секретов (`YANDEX_MUSIC_TOKEN`, `LIDARR_API_KEY`, …) в базе. Сгенерируйте: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **Предупреждение:** если ключ утерян — зашифрованные секреты нельзя восстановить; сделайте резервную копию ключа. Без ключа запись секретов в базу невозможна, чтение происходит из переменных окружения |
-
-Настройки также доступны через HTTP API:
-
-- `GET /api/settings` — все настройки с источником (`db` / `env` / `default`), секреты замаскированы; каждый элемент содержит `readonly: bool` и `file_status` (для `ytmusic_oauth_file` — `ok`/`missing`/`invalid`; для `ytdlp_cookies_file` — `found`/`missing`; для остальных — `null`)
-- `PUT /api/settings` — обновить настройки (`{"key": "value", …}`); Tier-1–4 ключи реестра; запрос с readonly-ключом (`ytmusic_oauth_file`, `ytdlp_cookies_file`, `lidarr_import_path`, `library_map`) возвращает `400`
-- `DELETE /api/settings/{key}` — удалить переопределение из базы (откат к env / умолчанию); для readonly-ключей DELETE разрешён (сбрасывает ранее сохранённое в БД значение)
-
-> **`lidarr_import_path` и `library_map` — только через переменные окружения.** Начиная с этой версии эти ключи доступны в интерфейсе только для чтения (секция «Среда»). PUT-запрос для них отклоняется (`400`). Задавайте значения исключительно через `ALBFETCHARR_LIDARR_IMPORT_PATH` / `ALBFETCHARR_LIBRARY_MAP`. Ранее сохранённые в БД значения по-прежнему применяются до их удаления через DELETE.
-
-> **Примечание об изменении логики `enable_*`:** начиная с этой версии переменные `ALBFETCHARR_ENABLE_YANDEX`, `ALBFETCHARR_ENABLE_YOUTUBE_MUSIC` и `ALBFETCHARR_ENABLE_SOUNDCLOUD` принимают только `1`/`true`/`yes` (включено) и `0`/`false`/`no` (отключено). В предыдущих версиях `enable_youtube_music` и `enable_soundcloud` считали _любое_ ненулевое значение (например, `false` или `no`) как «включено» — это была ошибка. Если вы явно задавали эти переменные, проверьте, что значение по-прежнему корректно.
-
-### Контейнер
-
-| Переменная | По умолчанию | Описание |
-|---|---|---|
-| `UID` | `1000` | UID пользователя в контейнере |
-| `GID` | `1000` | GID пользователя в контейнере |
-| `UMASK` | `022` | umask |
-
-## Веб-интерфейс
-
-По умолчанию контейнер запускает веб-сервер (gunicorn) на порту `5000`. Фронтенд собран с помощью Vite из React-компонентов.
-
-Интерактивная документация API доступна по адресу `http://localhost:5000/apidoc/scalar` (Scalar UI). Там же доступны Swagger UI (`/apidoc/swagger`), Redoc (`/apidoc/redoc`) и сам OpenAPI-документ (`/apidoc/openapi.json`).
-
-Интерфейс работает в три шага (сеанс завершается после завершения загрузки):
-
-1. **Select** — загрузить список wanted-альбомов из Lidarr, отфильтровать/отсортировать, выбрать источники для поиска
-2. **Results** — поиск выбранных альбомов во всех включенных источниках, отображение результатов с обложками, выбор лучшего совпадения и качества для каждого альбома
-3. **Download** — загрузка с отображением прогресса в реальном времени (прогресс-бары по альбомам, терминальный лог) и автоматический импорт в Lidarr (если `ALBFETCHARR_LIDARR_IMPORT_PATH` установлен)
-
-
-## CLI-режим
-
-AlbFetcharr также поддерживает запуск из командной строки:
+The package installs an `albfetcharr` entry point (also `python -m albfetcharr`):
 
 ```bash
-# Загрузить все wanted-альбомы и импортировать в Lidarr
-docker compose run --rm albfetcharr wanted
-
-# Загрузить без импорта
-docker compose run --rm albfetcharr wanted --no-import
-
-# Использовать конкретный источник (yandex / youtube_music / soundcloud)
-docker compose run --rm albfetcharr wanted --source youtube_music
-
-# Загрузить конкретный альбом по URL (источник определяется автоматически)
-docker compose run --rm albfetcharr download "https://music.yandex.ru/album/12345"
-
-# Загрузить с явным указанием источника
-docker compose run --rm albfetcharr download --source soundcloud "https://soundcloud.com/..."
+albfetcharr wanted                     # fetch every wanted album, import into Lidarr
+albfetcharr wanted --no-import         # fetch only, no import
+albfetcharr wanted --source youtube_music   # restrict to one source
+albfetcharr download "https://music.yandex.ru/album/12345"   # one album, source auto-detected
+albfetcharr download --source soundcloud "https://soundcloud.com/..."
 ```
 
-## Миграция переменных окружения
+## Development
 
-В этой версии несколько переменных переименованы для точности:
+Requires **Python 3.13+**.
 
-| Старая переменная | Новая переменная | Причина |
-|---|---|---|
-| `ALBFETCHARR_TIMEOUT` | `ALBFETCHARR_YANDEX_TIMEOUT` | применялась только к Яндекс Музыке |
-| `ALBFETCHARR_TRIES` | `ALBFETCHARR_YANDEX_TRIES` | применялась только к Яндекс Музыке |
-| `ALBFETCHARR_RETRY_DELAY` | `ALBFETCHARR_YANDEX_RETRY_DELAY` | применялась только к Яндекс Музыке |
+```bash
+pip install -e ".[dev]"     # editable install with dev tools
+pytest                      # tests (see pyproject for coverage config)
+ruff check . && ruff format .
+```
 
-Обновите свой `docker-compose.yml` / `.env` и при необходимости настройки в DWE-воркспейсе (`workspace/defaults.yml` / `workspace/local.yml`).
+Running the server locally:
 
-Переменные `ALBFETCHARR_YANDEX_PATH_PATTERN` и `ALBFETCHARR_YTDLP_PATH_PATTERN` более не читаются — шаблоны пути зашиты в код. Удалите их из конфигурации, если они присутствуют.
+```bash
+gunicorn "albfetcharr.web.app:create_app()" --bind 0.0.0.0:5000 --threads 4
+```
 
-## Миграция с Yamdarr
+The frontend (React + Vite SPA) lives in a **separate repo** and is built there
+(`npm ci && npm run build`, **Node.js 20+**). To have Flask serve the UI when
+running the backend outside Docker, drop the built SPA into
+`albfetcharr/web/static/dist/`. The production Docker image does this for you (see
+the deploy repo's `Dockerfile`).
 
-Если вы используете старый образ `semsemyonoff/yamdarr`, обновите `docker-compose.yml`:
+### Versioning
 
-1. Измените имя образа:
-   ```diff
-   - image: semsemyonoff/yamdarr
-   + image: semsemyonoff/albfetcharr
-   ```
+The installed package version (`pyproject [project].version`, read via
+`importlib.metadata`) is the single source of truth, re-exported as
+`albfetcharr.__version__`. The version the service *reports* is `APP_VERSION`: in
+the production image a build-time `APP_VERSION` env (wired from the release tag by
+the deploy repo's build script) is baked in; otherwise it falls back to the
+package version.
 
-2. Переименуйте переменные окружения (`YAMDARR_*` → `ALBFETCHARR_*`):
-   ```diff
-   - YAMDARR_LIDARR_IMPORT_PATH=/data/downloads/yamd
-   + ALBFETCHARR_LIDARR_IMPORT_PATH=/data/downloads/alb
-   - YAMDARR_LIBRARY_MAP=/data/library=/libraries/music
-   + ALBFETCHARR_LIBRARY_MAP=/data/library=/libraries/music
-   ```
+## Environment variables
 
-   > **Примечание:** `YAMDARR_AUTO_DOWNLOAD` и `YAMDARR_AUTO_CRON` больше не поддерживаются — автоматическая фоновая загрузка удалена. Используйте веб-интерфейс или CLI для запуска загрузки вручную.
+The app's full configuration contract. Anything also exposed in the settings
+store can be changed at runtime from the UI (see [Settings store](#settings-store)).
 
-   Полный список переименованных переменных:
-   | Старая (Yamdarr) | Новая (AlbFetcharr) |
-   |---|---|
-   | `YAMDARR_LIDARR_IMPORT_PATH` | `ALBFETCHARR_LIDARR_IMPORT_PATH` |
-   | `YAMDARR_LIBRARY_MAP` | `ALBFETCHARR_LIBRARY_MAP` |
-   | `YAMDARR_PORT` | `ALBFETCHARR_PORT` |
-   | `YAMDARR_LYRICS_FORMAT` | `ALBFETCHARR_LYRICS_FORMAT` |
-   | `YAMDARR_COVER_RESOLUTION` | `ALBFETCHARR_COVER_RESOLUTION` |
-   | `YAMDARR_EMBED_COVER` | `ALBFETCHARR_EMBED_COVER` |
-   | `YAMDARR_SKIP_EXISTING` | `ALBFETCHARR_SKIP_EXISTING` |
-   | `YAMDARR_CLEAR_COMMENTS` | `ALBFETCHARR_CLEAR_COMMENTS` |
-   | `YAMDARR_DELAY` | `ALBFETCHARR_DELAY` |
-   | `YAMDARR_STICK_TO_ARTIST` | `ALBFETCHARR_STICK_TO_ARTIST` |
-   | `YAMDARR_ONLY_MUSIC` | `ALBFETCHARR_ONLY_MUSIC` |
-   | `YAMDARR_COMPAT_LEVEL` | `ALBFETCHARR_COMPAT_LEVEL` |
-   | `YAMDARR_PATH_PATTERN` | — (шаблон пути больше не настраивается — зашит в код, см. выше) |
-   | `YAMDARR_UNSAFE_PATH` | `ALBFETCHARR_UNSAFE_PATH` |
-   | `YAMDARR_TIMEOUT` | `ALBFETCHARR_YANDEX_TIMEOUT` |
-   | `YAMDARR_TRIES` | `ALBFETCHARR_YANDEX_TRIES` |
-   | `YAMDARR_RETRY_DELAY` | `ALBFETCHARR_YANDEX_RETRY_DELAY` |
+### Required
 
-   Остальные переменные не изменились: `LIDARR_URL`, `LIDARR_API_KEY`, `YANDEX_MUSIC_TOKEN`, `YANDEX_MUSIC_QUALITY`, `DOWNLOAD_DIR`, `UID`, `GID`, `UMASK`.
+| Variable             | Description                                                                              |
+|----------------------|------------------------------------------------------------------------------------------|
+| `YANDEX_MUSIC_TOKEN` | [Yandex Music auth token](https://yandex-music.readthedocs.io/en/main/token.html)        |
+| `LIDARR_URL`         | Lidarr base URL (e.g. `http://lidarr:8686`)                                               |
+| `LIDARR_API_KEY`     | Lidarr API key                                                                           |
 
-## Зависимости
+### Service
 
-- [yandex-music-downloader](https://github.com/llistochek/yandex-music-downloader) — загрузка треков из Яндекс Музыки
-- [yandex-music](https://github.com/MarshalX/yandex-music-api) — поиск альбомов через API Яндекс Музыки
-- [ytmusicapi](https://github.com/sigma67/ytmusicapi) — поиск альбомов в YouTube Music (без авторизации)
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — загрузка из YouTube Music и SoundCloud
-- [yt-dlp-ejs](https://github.com/yt-dlp/ejs) + [deno](https://deno.com/) — JS-рантайм и challenge-solver для YouTube (решение signature/n-challenge; без них формат недоступен и загрузка падает с 403). Встроены в Docker-образ; при запуске без Docker установите `deno` и `pip install yt-dlp-ejs`
-- [ffmpeg](https://ffmpeg.org/) — конвертация аудио для yt-dlp источников (включён в Docker-образ; требуется на хосте при запуске без Docker)
-- [Lidarr](https://lidarr.audio/) — управление библиотекой, wanted-список, импорт
+| Variable                         | Default     | Description                                                                 |
+|----------------------------------|-------------|-----------------------------------------------------------------------------|
+| `ALBFETCHARR_PORT`               | `5000`      | Port the server binds (the container always serves on 5000)                 |
+| `ALBFETCHARR_LIDARR_IMPORT_PATH` | —           | Download dir as Lidarr sees it (for ManualImport)                           |
+| `ALBFETCHARR_LIBRARY_MAP`        | —           | Library path map `lidarr_path=albfetcharr_path,…` (cover-art copy)          |
+| `DOWNLOAD_DIR`                   | `/downloads`| Download dir inside the container                                           |
+| `CHOWN_DIRS`                     | `true`      | Chown writable dirs on startup (`true` / `false`)                           |
+| `ALBFETCHARR_DEFAULT_LANG`       | `en`        | Default UI language (`en` / `ru`)                                           |
+| `ALBFETCHARR_DEFAULT_THEME`      | `system`    | Default UI theme (`system` / `light` / `dark`)                             |
+| `ALBFETCHARR_LOG_LEVEL`          | `INFO`      | Log level (`DEBUG`…`CRITICAL`); `DEBUG` logs internal HTTP calls. Also the `app_log_level` setting (applies without restart) |
 
-> Фронтенд (React + Vite SPA) находится в **отдельном репозитории** и собирается там (`npm ci && npm run build`, требуется **Node.js 20+**). При запуске бэкенда вне Docker положите собранный фронтенд в `albfetcharr/web/static/dist/`, чтобы Flask отдавал интерфейс.
+### Download tuning
 
-## Спасибо
+| Variable                          | Default | Description                                                              |
+|-----------------------------------|---------|--------------------------------------------------------------------------|
+| `YANDEX_MUSIC_QUALITY`            | `2`     | `0` AAC 64, `1` AAC 192, `2` FLAC                                         |
+| `ALBFETCHARR_LYRICS_FORMAT`       | `lrc`   | Lyrics: `none`, `text`, `lrc`                                             |
+| `ALBFETCHARR_COVER_RESOLUTION`    | `400`   | Cover size in px, or `original`                                          |
+| `ALBFETCHARR_EMBED_COVER`         | `0`     | Embed cover in the audio file (`0` / `1`)                                 |
+| `ALBFETCHARR_SKIP_EXISTING`       | `1`     | Skip already-downloaded tracks (`0` / `1`)                               |
+| `ALBFETCHARR_CLEAR_COMMENTS`      | `0`     | Strip the comments tag (`0` / `1`)                                       |
+| `ALBFETCHARR_DELAY`               | `0`     | Delay between requests (seconds)                                         |
+| `ALBFETCHARR_STICK_TO_ARTIST`     | `0`     | Only download albums by the requested artist (`0` / `1`)                 |
+| `ALBFETCHARR_ONLY_MUSIC`          | `0`     | Music only, no podcasts/audiobooks (`0` / `1`)                           |
+| `ALBFETCHARR_COMPAT_LEVEL`        | `1`     | Compatibility level (`0`–`1`)                                            |
+| `ALBFETCHARR_UNSAFE_PATH`         | `0`     | Don't sanitize paths (`0` / `1`)                                        |
+| `ALBFETCHARR_YTDLP_FORMAT`        | `opus`  | yt-dlp source format: `best` (no re-encode), `opus`, `m4a`, `mp3`        |
+| `ALBFETCHARR_YTDLP_QUALITY`       | `192`   | Bitrate (kbit/s) for lossy formats; ignored for `best`                  |
+| `ALBFETCHARR_YTDLP_COOKIES`       | —       | Path to a Netscape `cookies.txt` for yt-dlp (see [Cookies for YouTube](#cookies-for-youtube)) |
+| `ALBFETCHARR_YTDLP_RETRIES`       | `3`     | Per-track download retries on transient errors. Minimum 1               |
+| `ALBFETCHARR_YTMUSIC_OAUTH`       | `/config/ytmusic_oauth.json` | OAuth token file for authenticated YT Music search (used only if present) |
+| `ALBFETCHARR_YTMUSIC_CLIENT_ID`   | —       | Google OAuth `client_id` (if not inside the oauth file)                 |
+| `ALBFETCHARR_YTMUSIC_CLIENT_SECRET`| —      | Google OAuth `client_secret` (if not inside the oauth file)            |
+| `ALBFETCHARR_ENABLE_YANDEX`       | `1`     | Enable Yandex Music (`1`/`true`/`yes` on, `0`/`false`/`no` off)          |
+| `ALBFETCHARR_ENABLE_YOUTUBE_MUSIC`| `1`     | Enable YouTube Music (same truthy/falsey set)                           |
+| `ALBFETCHARR_ENABLE_SOUNDCLOUD`   | `1`     | Enable SoundCloud (same truthy/falsey set)                              |
 
-- Разработчикам проекта [yandex-music-api](https://github.com/MarshalX/yandex-music-api)
-- Разработчикам проекта [yandex-music-downloader](https://github.com/llistochek/yandex-music-downloader)
-- Разработчикам проекта [Lidarr](https://github.com/Lidarr/Lidarr)
+### Network (Yandex Music)
 
-## Дисклеймер
+| Variable                        | Default | Description                                          |
+|---------------------------------|---------|------------------------------------------------------|
+| `ALBFETCHARR_YANDEX_TIMEOUT`    | `20`    | Request timeout (seconds). Formerly `ALBFETCHARR_TIMEOUT` |
+| `ALBFETCHARR_YANDEX_TRIES`      | `20`    | Retries on network errors. Formerly `ALBFETCHARR_TRIES`   |
+| `ALBFETCHARR_YANDEX_RETRY_DELAY`| `5`     | Delay between retries (seconds). Formerly `ALBFETCHARR_RETRY_DELAY` |
 
-Данный проект является независимой разработкой и никак не связан с компанией Яндекс, Google или SoundCloud.
+### Container
 
-Скачивание музыки из интернета может быть ограничено законами об авторских правах в вашей юрисдикции. **Пользователь несет полную ответственность за соответствие музыкального контента местному законодательству.**
+| Variable | Default | Description                |
+|----------|---------|----------------------------|
+| `UID`    | `1000`  | Container user UID         |
+| `GID`    | `1000`  | Container user GID         |
+| `UMASK`  | `022`   | umask                      |
 
-При использовании YouTube Music и SoundCloud как источников учитывайте условия использования этих сервисов. Использование yt-dlp для автоматической загрузки контента может нарушать условия использования этих платформ.
+## Settings store
+
+AlbFetcharr supports an optional persistent settings store (SQLite). Without it
+the app is env-only — behavior is unchanged from earlier versions.
+
+| Variable                 | Default                    | Description                                                                 |
+|--------------------------|----------------------------|-----------------------------------------------------------------------------|
+| `ALBFETCHARR_DB_PATH`    | `/config/albfetcharr.db`   | SQLite settings-store path. Mount `/config` persistently to keep settings   |
+| `ALBFETCHARR_SECRET_KEY` | —                          | Fernet key encrypting secrets (token, API key, …) at rest. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **If lost, encrypted secrets can't be recovered — back it up.** Without it, secret writes to the DB are refused and reads fall through to env |
+
+Settings are also available over HTTP:
+
+- `GET /api/settings` — all settings with their source (`db` / `env` / `default`),
+  secrets masked; each item has `readonly: bool` and `file_status`.
+- `PUT /api/settings` — update settings (`{"key": "value", …}`); a readonly key
+  (`ytmusic_oauth_file`, `ytdlp_cookies_file`, `lidarr_import_path`, `library_map`)
+  returns `400`.
+- `DELETE /api/settings/{key}` — drop a DB override (fall back to env / default).
+
+> **`lidarr_import_path` and `library_map` are env-only.** They are read-only in
+> the UI ("Environment" section) and `PUT` is rejected (`400`) — set them via
+> `ALBFETCHARR_LIDARR_IMPORT_PATH` / `ALBFETCHARR_LIBRARY_MAP`. Previously stored
+> DB values still apply until removed via `DELETE`.
+
+> **`enable_*` semantics:** `ALBFETCHARR_ENABLE_YANDEX`,
+> `ALBFETCHARR_ENABLE_YOUTUBE_MUSIC`, `ALBFETCHARR_ENABLE_SOUNDCLOUD` accept only
+> `1`/`true`/`yes` (on) and `0`/`false`/`no` (off). Earlier versions treated any
+> non-empty value (even `false`) as "on" for two of them — a bug. If you set these
+> explicitly, double-check the value.
+
+The path-pattern variables (`ALBFETCHARR_YANDEX_PATH_PATTERN` /
+`ALBFETCHARR_YTDLP_PATH_PATTERN`) are no longer read — the path layout is fixed
+in code. Remove them if present.
+
+## Dependencies
+
+- [yandex-music-downloader](https://github.com/llistochek/yandex-music-downloader) — Yandex track downloads
+- [yandex-music](https://github.com/MarshalX/yandex-music-api) — Yandex album search API
+- [ytmusicapi](https://github.com/sigma67/ytmusicapi) — YouTube Music search
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — YouTube Music / SoundCloud / Bandcamp downloads
+- [yt-dlp-ejs](https://github.com/yt-dlp/ejs) + [deno](https://deno.com/) — JS runtime / challenge solver for YouTube (without them some formats 403). Bundled in the Docker image; install `deno` + `pip install yt-dlp-ejs` when running outside Docker
+- [ffmpeg](https://ffmpeg.org/) — audio conversion for the yt-dlp sources (in the image; required on the host otherwise)
+- [Lidarr](https://lidarr.audio/) — library, wanted list, import
+
+## Thanks
+
+- The [yandex-music-api](https://github.com/MarshalX/yandex-music-api) developers
+- The [yandex-music-downloader](https://github.com/llistochek/yandex-music-downloader) developers
+- The [Lidarr](https://github.com/Lidarr/Lidarr) developers
+
+## Disclaimer
+
+This is an independent project, not affiliated with Yandex, Google, or SoundCloud.
+
+Downloading music from the internet may be restricted by copyright law in your
+jurisdiction. **You are solely responsible for ensuring the music content
+complies with local law.** When using YouTube Music and SoundCloud as sources,
+mind those services' terms of use — automated downloading via yt-dlp may violate
+them.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
